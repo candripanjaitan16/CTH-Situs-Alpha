@@ -1,0 +1,11 @@
+import { useWorkspace } from "../context/WorkspaceContext";
+import { Badge, ConnectionCard, Notice, PageTitle } from "../components/UI";
+export default function ColabConnection() {
+  const { drive, selectedProject } = useWorkspace();
+  return <><PageTitle title="Colab Connection" description="Pusat koneksi penyimpanan, runtime training, dan pengujian model." action={<Badge tone="warning">Runtime belum terintegrasi</Badge>} />
+    <div className="cth-grid two"><ConnectionCard title="Google Drive" description="Pemeriksaan akses melalui backend" {...drive} /><ConnectionCard title="Google Colab" description="Belum ada heartbeat atau job runtime" /></div>
+    <section className="cth-card cth-section-gap"><div className="cth-card-heading"><h2>Alur koneksi yang akan dibangun</h2><Badge>Rencana integrasi</Badge></div><div className="cth-pipeline"><div><strong>Frontend CTH</strong><small>Kontrol dan tampilan status</small></div><span>↔</span><div><strong>Backend FastAPI</strong><small>Otorisasi dan pekerjaan</small></div><span>↔</span><div><strong>Drive & Colab</strong><small>Berkas dan eksekusi model</small></div></div><p className="cth-muted">Drive menyimpan berkas. Runtime Colab harus menjalankan kode penghubung; koneksi Drive saja tidak otomatis menjalankan Colab.</p></section>
+    <div className="cth-grid two cth-section-gap"><section className="cth-card"><h2>Runtime session</h2><dl className="cth-details"><dt>Proyek</dt><dd>{selectedProject?.name || "Belum dipilih"}</dd><dt>GPU / RAM</dt><dd>Belum diketahui</dd><dt>Heartbeat terakhir</dt><dd>Belum tersedia</dd><dt>Sesi berakhir</dt><dd>Belum dapat dipantau</dd></dl><button className="cth-button primary" disabled>Hubungkan runtime</button></section><section className="cth-card"><h2>Pekerjaan berikutnya</h2><ul className="cth-checklist"><li>Notebook penghubung per proyek</li><li>Otorisasi runtime berumur pendek</li><li>Heartbeat, status job, dan checkpoint</li><li>Chat model dan konversi GGUF</li><li>Notifikasi ketika runtime tidak merespons</li></ul></section></div>
+    <Notice>Durasi sesi dan ketersediaan GPU tidak dianggap pasti. Notifikasi sesi hanya boleh menyatakan status yang benar-benar terdeteksi; versi ini belum memeriksanya.</Notice>
+  </>;
+}

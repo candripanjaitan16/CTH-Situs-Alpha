@@ -1,0 +1,39 @@
+# Environment dan credentials
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+credentials.json
+client_secret*.json
+token*.json
+*.pem
+*.key
+
+# Data dan status lokal
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+colab_runtime_state.json
+workspace/
+datasets/
+training_results/
+models/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Frontend
+node_modules/
+dist/
+
+# Hasil model
+*.gguf
+*.safetensors
+*.pt
+*.pth
+
+# Log
+*.log
