@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useWorkspace } from "../context/WorkspaceContext";
 import "./ModelTesting.css";
 
 const API = (
-  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000"
+  import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? "http://127.0.0.1:8000" : "")
 ).replace(/\/$/, "");
 
 const ACTIVE = ["queued", "downloading", "indexing", "uploading", "installing"];
@@ -127,6 +127,7 @@ export default function ModelTesting({ onNavigate }) {
   const [mode, setMode] = useState("qwen");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState("");
+  const [libraryOpen, setLibraryOpen] = useState(() => window.matchMedia("(min-width: 701px)").matches);
 
   const scope = useRef("");
   const pending = useRef(false);
@@ -140,13 +141,16 @@ export default function ModelTesting({ onNavigate }) {
 
   const available = model?.status === "available" && model.job_id === selected;
 
-  scope.current = `${projectId || ""}:${selected}`;
+  useLayoutEffect(() => {
+    scope.current = Symbol(`${projectId || ""}:${selected}`);
+    return () => { scope.current = null; };
+  }, [projectId, selected]);
 
   const refresh = useCallback(
     async (signal) => {
       if (!projectId || !selected) return;
 
-      const key = `${projectId}:${selected}`;
+      const key = scope.current;
 
       setChecking(true);
       setError("");
@@ -244,7 +248,7 @@ export default function ModelTesting({ onNavigate }) {
     if (!projectId || !selected) return;
 
     const controller = new AbortController();
-    const key = `${projectId}:${selected}`;
+    const key = scope.current;
     let timer;
 
     async function poll() {
@@ -389,6 +393,7 @@ export default function ModelTesting({ onNavigate }) {
           sources: value.sources,
           mode: value.mode,
           notice: value.notice,
+          basis: value.basis,
         },
       ]);
     } catch (err) {
@@ -451,11 +456,11 @@ export default function ModelTesting({ onNavigate }) {
       )}
 
       <div className="mt-layout">
-        <aside className="mt-library">
-          <div className="mt-library-head">
-            <h2>Model tersimpan</h2>
-            <span>{models.length}</span>
-          </div>
+        <details className="mt-library" open={libraryOpen} onToggle={(event) => setLibraryOpen(event.currentTarget.open)}>
+          <summary className="mt-library-head">
+            <strong>Model tersimpan</strong>
+            <span>{models.length} · buka/tutup</span>
+          </summary>
 
           <p className="mt-library-note">
             Hasil training selesai pada proyek ini.
@@ -523,7 +528,7 @@ export default function ModelTesting({ onNavigate }) {
               Pulihkan hasil tersimpan ketika runtime berganti.
             </p>
           </div>
-        </aside>
+        </details>
 
         <section className="mt-chat">
           <header className="mt-chat-head">
@@ -556,6 +561,7 @@ export default function ModelTesting({ onNavigate }) {
           </header>
 
           <div className="mt-toolbar">
+            <button type="button" className="mt-new-chat" disabled={busy || !messages.length} onClick={() => { setMessages([]); setQuestion(""); setError(""); }}>Percakapan baru</button>
             <label>
               Mode
               <select
@@ -564,7 +570,7 @@ export default function ModelTesting({ onNavigate }) {
                 onChange={(event) => setMode(event.target.value)}
                 disabled={busy}
               >
-                <option value="qwen">Qwen · hasil training</option>
+                <option value="qwen">{selectedModel?.model_name || "Model"} · generatif</option>
                 <option value="extractive">Kutipan sumber</option>
               </select>
             </label>
@@ -621,7 +627,7 @@ export default function ModelTesting({ onNavigate }) {
 
                 {available ? (
                   <div className="mt-prompts">
-                    {["Apa itu ChanThecno?", "Siapa penciptamu?"].map(
+                    {["Ringkas informasi utama sumber proyek.", "Apa yang dapat dijelaskan dari data proyek?"].map(
                       (text) => (
                         <button
                           type="button"
@@ -688,12 +694,12 @@ export default function ModelTesting({ onNavigate }) {
                   </div>
 
                   <p>{item.text}</p>
+                  {item.notice && <small className="mt-answer-basis">{item.notice}</small>}
 
                   {item.sources?.length > 0 && (
                     <details className="mt-sources">
                       <summary>{item.sources.length} sumber</summary>
                       <p>{item.sources.join(", ")}</p>
-                      {item.notice && <small>{item.notice}</small>}
                     </details>
                   )}
                 </div>

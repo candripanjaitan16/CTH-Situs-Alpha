@@ -15,8 +15,9 @@ from fastapi import APIRouter, HTTPException, Request
 from googleapiclient.http import MediaIoBaseDownload
 from pydantic import BaseModel, Field
 
-from app.colab_bridge import BridgeError, RuntimeBridge as BaseRuntimeBridge
-from app.colab_stop import atomic_json, local_only, project_row, receipt_path, verify_receipts
+from app.colab_bridge import BridgeError, RuntimeBridge
+from app.storage import atomic_json
+from app.colab_stop import local_only, project_row, receipt_path, verify_receipts
 from app.drive_storage import storage_connection, upload_project_file
 from app.training_backup import (
     BackupError, local_backup, prepare_local_backup, read_remote_job,
@@ -28,7 +29,9 @@ from app.checkpoint_backup import router as checkpoint_router, sync_checkpoint
 router = APIRouter()
 router.include_router(checkpoint_router)
 REPO = Path(__file__).resolve().parents[2]
-WORK = REPO / 'backend/workspace/training-web'
+from app.paths import WORKSPACE
+
+WORK = WORKSPACE / 'training-web'
 CURRENT = WORK / 'current.json'
 TERMINAL = {'completed', 'stopped', 'failed'}
 CODE_FILES = ['__init__.py', 'common.py', 'data.py', 'train.py', 'web_worker.py']
@@ -37,16 +40,6 @@ MONITOR_GUARD = threading.Lock()
 POLL_SECONDS = 15
 RETRY_SECONDS = 60
 
-
-class RuntimeBridge(BaseRuntimeBridge):
-    def request(self, method, path, **kwargs):
-        response = self.http.request(method, self.url(path), timeout=(15, 90),
-                                     allow_redirects=False, **kwargs)
-        if not response.ok:
-            status = response.status_code
-            response.close()
-            raise BridgeError(f'Akses Jupyter gagal: HTTP {status}.')
-        return response
 
 
 def preflight_record(project_id):
@@ -183,6 +176,7 @@ def uncertain_job(job, message, error):
         job,
         status='uncertain',
         training_status='unknown',
+        worker_running=None,
         last_confirmed_training_status=confirmed,
         message=message,
         connection_error=safe_error(error),
@@ -289,7 +283,10 @@ def monitor_once(job):
             phase = data.get('status')
             if phase not in {'preparing', 'training', 'stopped', 'failed', 'completed'}:
                 raise BackupError('Status worker tidak dikenali. Tidak meluncurkan pekerjaan baru.')
-            allowed = {'updated_at', 'run_id', 'step', 'max_steps', 'epoch', 'metrics', 'gpu_verified', 'error_type'}
+            if phase in {'training', 'preparing'} and not data.get('worker_running'):
+                uncertain_job(job, 'Heartbeat worker belum terverifikasi. Progres lama adalah riwayat; periksa koneksi tanpa mengulang training.', BackupError('Heartbeat worker tidak tersedia atau kedaluwarsa.'))
+                return
+            allowed = {'updated_at', 'run_id', 'step', 'max_steps', 'epoch', 'metrics', 'gpu_verified', 'error_type', 'worker_running'}
             fields = {key: value for key, value in data.items() if key in allowed}
             fields.update(
                 training_status=phase,

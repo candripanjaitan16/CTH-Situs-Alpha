@@ -13,7 +13,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from googleapiclient.http import MediaIoBaseDownload
 
-from app.colab_stop import atomic_json
+from app.storage import atomic_json
 from app.drive_storage import (
     storage_connection,
     project_folder_id,
@@ -67,7 +67,7 @@ def records(project_id):
 
             if (
                 identity(job, project_id)
-                and job.get("status") == "completed"
+                and (job.get("status") == "completed" or job.get("training_status") == "completed")
             ):
                 found[job["job_id"]] = job
 
@@ -78,7 +78,7 @@ def records(project_id):
 
     if (
         identity(current, project_id)
-        and current.get("status") == "completed"
+        and (current.get("status") == "completed" or current.get("training_status") == "completed")
     ):
         found[current["job_id"]] = current
 
@@ -258,6 +258,7 @@ def download_drive(
         not isinstance(size, int)
         or isinstance(size, bool)
         or size <= 0
+        or size > 2 * 1024**3
     ):
         raise ValueError("Ukuran cadangan tidak valid.")
 
@@ -386,8 +387,14 @@ def archive_for(job, work, drive):
 
 
 def unpack(archive, target, job):
+    if target.is_symlink() or target.resolve() != target:
+        raise ValueError("Direktori ekstraksi tidak aman.")
     with tarfile.open(archive, "r:*") as tar:
-        entries = tar.getmembers()
+        entries = []
+        for entry in tar:
+            entries.append(entry)
+            if len(entries) > 100 or entry.size < 0 or entry.size > 2 * 1024**3 or sum(item.size for item in entries) > 2 * 1024**3:
+                raise ValueError("Arsip model melebihi batas ukuran atau jumlah berkas.")
         names = [entry.name for entry in entries]
 
         if (
@@ -449,6 +456,8 @@ def unpack(archive, target, job):
 
         if (
             not isinstance(records_list, list)
+            or any(not isinstance(record, dict) for record in records_list)
+            or len(records_list) != len(names) - 1
             or {
                 record.get("path")
                 for record in records_list

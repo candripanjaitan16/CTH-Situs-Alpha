@@ -61,11 +61,23 @@ def create_store(path):
 
 
 def add_passage(conn, source, content):
-    for start in range(0, len(content), 1200):
-        passage = content[start:start + 1200].strip()
+    start = 0
+    while start < len(content):
+        end = min(start + 1200, len(content))
+        if end < len(content):
+            boundary = content.rfind(" ", start + 800, end)
+            if boundary > start:
+                end = boundary
+        passage = content[start:end].strip()
         if passage:
             digest = hashlib.sha256(passage.encode()).hexdigest()
             conn.execute("INSERT OR IGNORE INTO passages(source,content,digest) VALUES(?,?,?)", (source, passage, digest))
+        if end == len(content):
+            break
+        start = max(start + 1, end - 200)
+        boundary = content.find(" ", start, end)
+        if boundary != -1:
+            start = boundary + 1
 
 
 def add_sample(conn, input_ids, labels, group):

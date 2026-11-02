@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from .common import now, write_json
@@ -57,6 +58,16 @@ def main():
         except BlockingIOError:
             update("failed", "Masih ada worker lain pada proyek ini.")
             return
+
+        finished = threading.Event()
+
+        def heartbeat():
+            while not finished.is_set():
+                write_json(job / "heartbeat.json", {"job_id": job.name, "updated_at": now()})
+                finished.wait(10)
+
+        pulse = threading.Thread(target=heartbeat, daemon=True)
+        pulse.start()
 
         try:
             update(
@@ -193,6 +204,8 @@ def main():
             update("failed", message)
 
         finally:
+            finished.set()
+            pulse.join(timeout=2)
             if child is not None and child.poll() is None:
                 stop.touch()
 

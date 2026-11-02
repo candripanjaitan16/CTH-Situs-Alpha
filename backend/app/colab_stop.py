@@ -1,4 +1,3 @@
-import asyncio
 import codecs
 import fcntl
 import hashlib
@@ -18,12 +17,15 @@ from starlette.concurrency import run_in_threadpool
 
 from app.colab_bridge import BridgeError, RuntimeBridge
 from app.colab_snapshot import FINAL_CHECK_CODE, snapshot_code
+from app.storage import atomic_json, MAX_UPLOAD_BYTES
 from app.database import get_db
 from app.drive_storage import upload_project_file, storage_connection, find_subfolder, project_folder_id
 
 
 router = APIRouter()
-BASE_DIR = Path(__file__).resolve().parent.parent
+from app.paths import DATA_HOME
+
+BASE_DIR = DATA_HOME
 WORK = BASE_DIR / "workspace" / "stop-save"
 JOB_FILE = WORK / "current.json"
 LOCK_FILE = WORK / "job.lock"
@@ -57,20 +59,6 @@ def project_row(project_id):
         raise HTTPException(404, "Proyek tidak ditemukan.")
     return dict(row)
 
-
-def atomic_json(path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as handle:
-            temporary = Path(handle.name)
-            json.dump(data, handle, indent=2, ensure_ascii=False)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        if temporary and temporary.exists():
-            temporary.unlink()
 
 
 def job_read():
@@ -114,6 +102,8 @@ async def save_local_source(request: Request):
                     if not chunk:
                         continue
                     size += len(chunk)
+                    if size > MAX_UPLOAD_BYTES:
+                        raise HTTPException(413, "Sumber melebihi batas 64 MiB per berkas.")
                     if kind == "urls" and size > 200000:
                         raise HTTPException(413, "Daftar URL terlalu besar.")
                     if shutil.disk_usage(temporary).free < len(chunk) + 64 * 1024 * 1024:

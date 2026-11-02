@@ -4,7 +4,7 @@ import NeuralCanvas from "../components/NeuralCanvas";
 import { Badge, Notice, PageTitle } from "../components/UI";
 
 const API = (
-  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000"
+  import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? "http://127.0.0.1:8000" : "")
 ).replace(/\/$/, "");
 
 const TERMINAL = new Set(["idle", "completed", "stopped", "failed"]);
@@ -115,7 +115,6 @@ export default function TrainingWorkspace({ onNavigate }) {
   const [runtime, setRuntime] = useState(null);
   const [job, setJob] = useState({ status: "idle" });
   const [epochs, setEpochs] = useState("1");
-  const [preview, setPreview] = useState(false);
   const [busy, setBusy] = useState("");
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
@@ -157,7 +156,7 @@ export default function TrainingWorkspace({ onNavigate }) {
   const jobFresh = lastChecked && clock - lastChecked.getTime() < 30000;
 
   const training =
-    job.status === "training" && jobFresh && !jobError && !job.connection_error;
+    job.status === "training" && job.worker_running === true && jobFresh && !jobError && !job.connection_error;
 
   const name = modelName.trim();
 
@@ -276,7 +275,6 @@ export default function TrainingWorkspace({ onNavigate }) {
     setLastChecked(null);
     setRuntimeChecked(0);
     setConfirmed(false);
-    setPreview(false);
     setPreflight(false);
     setError("");
     setRuntimeError("");
@@ -383,7 +381,6 @@ export default function TrainingWorkspace({ onNavigate }) {
 
       if (valid()) {
         setJob(started);
-        setPreview(false);
 
         setMessage(
           `Permintaan training ${selectedName} diterima. Jangan menekan Mulai lagi.`,
@@ -446,31 +443,19 @@ export default function TrainingWorkspace({ onNavigate }) {
           <div className="cth-card-heading">
             <h2>Neural Activity</h2>
 
-            <Badge tone={training || preview ? "info" : "neutral"}>
-              {training ? "Training aktif" : preview ? "Demo visual" : "Diam"}
+            <Badge tone={training ? "info" : "neutral"}>
+              {training ? "Training aktif" : "Diam"}
             </Badge>
           </div>
 
-          <NeuralCanvas active={Boolean(training || preview)} />
+          <NeuralCanvas active={Boolean(training)} />
 
           <div className="cth-visual-footer">
             <p>
               {training
                 ? "Animasi mengikuti status training yang baru diperiksa."
-                : preview
-                  ? "Ini pratinjau animasi, bukan proses training."
-                  : "Belum ada status training aktif yang terverifikasi."}
+                : "Belum ada heartbeat worker aktif yang terverifikasi."}
             </p>
-
-            <button
-              className="cth-button"
-              disabled={activeJob || Boolean(busy)}
-              onClick={() => {
-                setPreview((value) => !value);
-              }}
-            >
-              {preview ? "Hentikan pratinjau" : "Pratinjau animasi"}
-            </button>
           </div>
         </section>
 

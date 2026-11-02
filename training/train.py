@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from .common import MODEL_ID, MODEL_REVISION, child, now, project_lock, read_json, require_t4, script_hash, validate_name, write_json
 from .data import StoredDataset, collate_examples, dataset_manifest, prepare_data
+from .common import checkpoint_state, validate_checkpoint
 
 
 def parse_args():
@@ -63,7 +64,7 @@ def run(args):
             complete = [p for p in checkpoints if (p / "cth-complete.json").exists()]
             if not complete:
                 raise ValueError("Belum ada checkpoint lengkap untuk dilanjutkan.")
-            resume = str(complete[-1])
+            resume = str(validate_checkpoint(complete[-1]))
         else:
             run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8]
             directory = child(project / "training_results", run_id)
@@ -125,7 +126,7 @@ def run(args):
                     return control
                 def on_save(self, args, state, control, **kwargs):
                     checkpoint = directory / "checkpoints" / f"checkpoint-{state.global_step}"
-                    write_json(checkpoint / "cth-complete.json", {"step": state.global_step, "saved_at": now()})
+                    write_json(checkpoint / "cth-complete.json", {"step": state.global_step, "saved_at": now(), "files": checkpoint_state(checkpoint)})
             training_args = TrainingArguments(output_dir=str(directory / "checkpoints"), num_train_epochs=args.epochs,
                 learning_rate=args.learning_rate, per_device_train_batch_size=1, per_device_eval_batch_size=1,
                 gradient_accumulation_steps=8, gradient_checkpointing=True, gradient_checkpointing_kwargs={"use_reentrant": False},

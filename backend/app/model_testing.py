@@ -10,9 +10,9 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.colab_bridge import RuntimeBridge as BaseRuntimeBridge
+from app.colab_bridge import RuntimeBridge
 from app.colab_stop import local_only, project_row
-from app.training_jobs import WORK, load_job
+from app.training_jobs import WORK
 from app.model_restore import catalog, select, begin_restore, restore_state
 
 router = APIRouter(prefix="/api/model-testing", tags=["Model Testing"])
@@ -26,17 +26,6 @@ class ChatRequest(BaseModel):
     mode: Literal["qwen", "extractive"] = "qwen"
     job_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
 
-
-class RuntimeBridge(BaseRuntimeBridge):
-    def request(self, method, path, **kwargs):
-        response = self.http.request(
-            method, self.url(path), timeout=(10, 60),
-            allow_redirects=False, **kwargs,
-        )
-        if not response.ok:
-            response.close()
-            raise RuntimeError("Jupyter belum dapat diakses.")
-        return response
 
 
 def selected_job(project_id, job_id=None):
@@ -53,7 +42,7 @@ def model_state(project_id, job):
     }
     if not job:
         return {**base, "status": "missing", "message": "Belum ada catatan training untuk proyek ini."}
-    if job.get("status") != "completed":
+    if job.get("status") != "completed" and job.get("training_status") != "completed":
         return {**base, "status": "not_ready", "message": "Tunggu pekerjaan training dan penyimpanan hasil selesai."}
     if not re.fullmatch(RUN_PATTERN, str(job.get("run_id", ""))):
         return {**base, "status": "missing", "message": "ID run hasil training belum tersedia."}
@@ -271,14 +260,22 @@ def chat(body: ChatRequest, request: Request):
             sources = reply.get("sources")
             if not isinstance(sources, list) or len(sources) > 50 or any(not isinstance(item, str) or len(item) > 300 for item in sources):
                 raise HTTPException(502, "Format sumber jawaban tidak sesuai.")
-            if reply.get("mode") not in {"qwen", "extractive"}:
-                raise HTTPException(502, "Mode jawaban tidak sesuai.")
+            if reply.get("mode") != body.mode:
+                raise HTTPException(502, "Mode jawaban tidak sesuai permintaan.")
+            if reply["mode"] == "extractive":
+                basis = "project"
+                notice = "Kutipan pencarian kata; bukan jawaban generatif model."
+            elif sources:
+                basis = "mixed"
+                notice = "Sumber proyek tersedia; jawaban generatif juga dapat mencakup pengetahuan umum."
+            else:
+                basis = "general"
+                notice = "Pengetahuan umum model; sumber proyek yang relevan tidak ditemukan."
             return {
                 "project_id": body.project_id, "run_id": job["run_id"],
                 "model_name": job.get("model_name"), "answer": reply["answer"],
                 "sources": sources, "mode": reply["mode"],
-                "notice": "Jawaban Qwen dapat keliru meskipun memakai sumber."
-                if reply["mode"] == "qwen" else "Jawaban berupa kutipan atau penolakan dari pencarian kata pada sumber.",
+                "basis": basis, "notice": notice,
             }
         except HTTPException:
             raise
@@ -319,5 +316,16 @@ def restore_model(body: RestoreRequest, request: Request):
     project_row(body.project_id)
 
     job = selected_job(body.project_id, body.job_id)
-
+    bridge = None
+    try:
+        bridge = open_bridge(body.project_id)
+        if inspect_model(bridge, body.project_id, job):
+            return {"project_id": body.project_id, "job_id": body.job_id, "status": "completed", "message": "Artefak model yang dipilih sudah tersedia di runtime; tidak memulihkan atau melatih ulang."}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(503, "Runtime belum dapat diperiksa. Periksa koneksi sebelum mencoba pemulihan lagi.") from None
+    finally:
+        if bridge:
+            bridge.close()
     return begin_restore(job, open_bridge)

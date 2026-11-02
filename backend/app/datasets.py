@@ -19,11 +19,15 @@ from googleapiclient.http import MediaIoBaseDownload
 from pydantic import BaseModel, Field
 
 from app.database import get_db
-from app.colab_stop import atomic_json, local_only, project_row, verify_receipts
+from app.storage import MAX_UPLOAD_BYTES
+from app.storage import atomic_json
+from app.colab_stop import local_only, project_row, verify_receipts
 from app.drive_storage import storage_connection, upload_project_file
 
 router = APIRouter(prefix='/api/datasets', tags=['Datasets'])
-BASE = Path(__file__).resolve().parent.parent
+from app.paths import DATA_HOME
+
+BASE = DATA_HOME
 DATA = BASE / 'workspace/datasets'
 RECEIPTS = BASE / 'workspace/stop-save/receipts'
 THREADS = set()
@@ -295,6 +299,8 @@ async def upload_txt(project_id: int, request: Request):
                 has_text = has_text or bool(text.lstrip('\ufeff').strip())
                 digest.update(chunk)
                 size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(413, 'TXT melebihi batas 64 MiB per berkas.')
                 handle.write(chunk)
             tail = decoder.decode(b'',final=True)
             has_text = has_text or bool(tail.lstrip('\ufeff').strip())

@@ -3,25 +3,14 @@ import re
 from pathlib import Path
 from uuid import uuid4
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 from app.database import get_db
-from app.drive_auth import SCOPES, TOKEN_FILE, save_credentials
+from app.drive_auth import connect_drive
 
 
 def storage_connection():
-    if not TOKEN_FILE.exists():
-        raise RuntimeError('Hubungkan Google Drive terlebih dahulu.')
-    credentials = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
-    if credentials.expired and credentials.refresh_token:
-        credentials.refresh(Request())
-        save_credentials(credentials)
-    if not credentials.valid:
-        raise RuntimeError('Otorisasi Google Drive perlu diperbarui.')
-    return build('drive', 'v3', credentials=credentials, cache_discovery=False)
+    return connect_drive()
 
 
 def project_folder_id(project_id):
