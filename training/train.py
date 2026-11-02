@@ -1,5 +1,6 @@
 import argparse
 import math
+import os
 import signal
 from datetime import datetime, timezone
 from functools import partial
@@ -68,7 +69,18 @@ def run(args):
             directory = child(project / "training_results", run_id)
             directory.mkdir(parents=True, exist_ok=False)
             write_json(directory / "run.json", {"created_at": now(), "settings": settings, "gpu": gpu, "environment": {"python": platform.python_version(), "torch": torch.__version__, "transformers": transformers.__version__, "peft": peft.__version__, "accelerate": accelerate.__version__}})
+        if args.resume_run:
+            (directory / "stop.request").unlink(missing_ok=True)
         status_file = directory / "status.json"
+        job_file = Path(os.environ["CTH_JOB_FILE"]) if os.environ.get("CTH_JOB_FILE") else None
+        job_stop = Path(os.environ["CTH_STOP_FILE"]) if os.environ.get("CTH_STOP_FILE") else None
+        def publish(data):
+            write_json(status_file, data)
+            if job_file:
+                current = read_json(job_file)
+                current.update(data)
+                current["gpu_verified"] = True
+                write_json(job_file, current)
         print(f"Run: {directory.name}", flush=True)
         print(f"GPU: {gpu['name']} | Model: {MODEL_ID}", flush=True)
         print("Folder kerja harus disinkronkan ke Drive oleh integrasi CTH; skrip ini tidak mengunggah ke Drive.", flush=True)
@@ -79,7 +91,7 @@ def run(args):
         for sig in (signal.SIGTERM, signal.SIGINT):
             previous_handlers[sig] = signal.signal(sig, stop_handler)
         try:
-            write_json(status_file, {"status": "preparing", "updated_at": now(), "run_id": directory.name})
+            publish({"status": "preparing", "updated_at": now(), "run_id": directory.name})
             set_seed(args.seed)
             tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=MODEL_REVISION, trust_remote_code=False)
             tokenizer.pad_token = tokenizer.eos_token
@@ -102,9 +114,11 @@ def run(args):
             class Progress(TrainerCallback):
                 def on_log(self, args, state, control, logs=None, **kwargs):
                     metrics = {key: value for key, value in (logs or {}).items() if isinstance(value, (int, float)) and math.isfinite(value)}
-                    write_json(status_file, {"status": "training", "updated_at": now(), "run_id": directory.name,
+                    publish({"status": "training", "updated_at": now(), "run_id": directory.name,
                         "step": state.global_step, "max_steps": state.max_steps, "epoch": state.epoch, "metrics": metrics})
                 def on_step_end(self, args, state, control, **kwargs):
+                    if (directory / "stop.request").exists() or (job_stop and job_stop.exists()):
+                        stopped["value"] = True
                     if stopped["value"]:
                         control.should_save = True
                         control.should_training_stop = True
@@ -124,7 +138,7 @@ def run(args):
                 data_collator=partial(collate_examples, pad_token_id=tokenizer.pad_token_id), callbacks=[Progress()])
             trainer.train(resume_from_checkpoint=resume)
             if stopped["value"]:
-                write_json(status_file, {"status": "stopped", "updated_at": now(), "run_id": directory.name,
+                publish({"status": "stopped", "updated_at": now(), "run_id": directory.name,
                     "step": trainer.state.global_step, "message": "Dihentikan setelah optimizer step; lanjutkan dari checkpoint lengkap."})
                 print("Training dihentikan. Checkpoint dipertahankan.", flush=True)
                 return
@@ -135,13 +149,13 @@ def run(args):
             tokenizer.save_pretrained(str(adapter))
             write_json(directory / "evaluation.json", safe_metrics)
             write_json(directory / "complete.json", {"completed_at": now(), "step": trainer.state.global_step})
-            write_json(status_file, {"status": "completed", "updated_at": now(), "run_id": directory.name,
+            publish({"status": "completed", "updated_at": now(), "run_id": directory.name,
                 "step": trainer.state.global_step, "adapter": "adapter", "metrics": safe_metrics})
             print(f"Training selesai. Adapter: {adapter}", flush=True)
             print("Eval loss bukan bukti jawaban selalu benar. Uji pertanyaan nyata sebelum dipakai.", flush=True)
         except BaseException as error:
-            write_json(status_file, {"status": "failed", "updated_at": now(), "run_id": directory.name,
-                "error_type": type(error).__name__, "message": "Pekerjaan gagal. Checkpoint lengkap tetap dipertahankan; periksa log runtime."})
+            publish({"status": "failed", "updated_at": now(), "run_id": directory.name,
+                "error_type": type(error).__name__, "message": str(error)[:400] if isinstance(error, ValueError) else "Pekerjaan gagal. Checkpoint lengkap tetap dipertahankan; periksa log runtime."})
             raise
         finally:
             for sig, handler in previous_handlers.items():

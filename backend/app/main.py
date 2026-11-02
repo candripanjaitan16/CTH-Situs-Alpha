@@ -3,8 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.colab import router as colab_router
 from app.database import init_db
+from app.datasets import router as datasets_router
 from app.drive_auth import check_drive_connection
 from app.projects import router as projects_router
+from app.model_testing import router as model_testing_router
 
 
 app = FastAPI(
@@ -14,7 +16,6 @@ app = FastAPI(
 
 init_db()
 
-# Akses frontend lokal
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
@@ -23,9 +24,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Router fitur
 app.include_router(projects_router)
 app.include_router(colab_router)
+app.include_router(datasets_router)
+app.include_router(model_testing_router)
 
 
 @app.get("/", tags=["General"])

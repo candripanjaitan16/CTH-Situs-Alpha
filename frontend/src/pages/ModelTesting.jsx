@@ -1,29 +1,789 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useWorkspace } from "../context/WorkspaceContext";
-import { Badge, Empty, Notice, PageTitle } from "../components/UI";
-const DEMO_REPLY = "Ini contoh efek balasan bertahap di CTH. Belum ada model atau runtime Colab yang menjalankan inferensi. Setelah integrasi tersedia, jawaban asli akan diterima dari backend.";
-export default function ModelTesting() {
-  const { selectedProject } = useWorkspace();
-  const [reply, setReply] = useState("");
-  const [typing, setTyping] = useState(false);
-  const [notice, setNotice] = useState("");
-  const timer = useRef(null);
-  useEffect(() => () => window.clearInterval(timer.current), []);
-  function previewReply() {
-    window.clearInterval(timer.current); setReply(""); setTyping(true);
-    let length = 0;
-    timer.current = window.setInterval(() => {
-      length += 4; setReply(DEMO_REPLY.slice(0, length));
-      if (length >= DEMO_REPLY.length) { window.clearInterval(timer.current); setTyping(false); }
-    }, 35);
+import "./ModelTesting.css";
+
+const API = (
+  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000"
+).replace(/\/$/, "");
+
+const ACTIVE = ["queued", "downloading", "indexing", "uploading", "installing"];
+
+async function request(path, options = {}, signal, timeout = 420000) {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+
+  if (signal?.aborted) abort();
+
+  signal?.addEventListener("abort", abort, { once: true });
+
+  const timer = window.setTimeout(abort, timeout);
+
+  try {
+    const response = await fetch(`${API}/api/model-testing${path}`, {
+      ...options,
+      signal: controller.signal,
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        ...options.headers,
+      },
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        typeof data.detail === "string"
+          ? data.detail
+          : `Permintaan gagal (${response.status}).`,
+      );
+    }
+
+    return data;
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error(
+        "Permintaan terputus. Pekerjaan di Colab mungkin " +
+          "masih berjalan; periksa status sebelum mengulang.",
+      );
+    }
+
+    if (error instanceof TypeError) {
+      throw new Error("Backend belum dapat dihubungi. Pastikan CTH berjalan.");
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
   }
-  return <>
-    <PageTitle title="Model Testing" description="Ruang percakapan dan ekspor model hasil pelatihan." action={<Badge tone="warning">Antarmuka · belum ada inferensi</Badge>} />
-    <div className="cth-grid testing-layout"><section className="cth-card cth-chat"><div className="cth-card-heading"><div><h2>{selectedProject?.model_name || "Pilih model proyek"}</h2><small>{selectedProject?.name || "Belum ada proyek aktif"}</small></div><Badge>Colab belum terhubung</Badge></div>
-      <div className="cth-chat-body" aria-live="polite">{reply ? <div className="cth-chat-message"><span className="cth-chat-avatar">CT</span><div><strong>Demo antarmuka</strong><p>{reply}{typing && <span className="cth-typing-cursor">▍</span>}</p></div></div> : <Empty icon="testing" title="Workspace percakapan siap">Belum ada model aktif. Pratinjau efek balasan tersedia tanpa mengirim data.</Empty>}</div>
-      <div className="cth-chat-compose"><textarea aria-label="Pesan untuk model" placeholder="Chat aktif setelah model dan runtime Colab terhubung." disabled rows={2} /><button className="cth-button primary" disabled>Kirim ↑</button></div>
-    </section><section className="cth-card"><h2>Kontrol model</h2><dl className="cth-details"><dt>Runtime</dt><dd>Belum diverifikasi</dd><dt>Model aktif</dt><dd>Belum dimuat</dd><dt>Format ekspor</dt><dd>GGUF</dd></dl><div className="cth-stack"><button className="cth-button" disabled>Jalankan model di Colab</button><button className="cth-button" onClick={previewReply} disabled={typing}>Pratinjau efek balasan</button><button className="cth-button primary" onClick={() => setNotice("Ekspor belum tersedia: integrasi runtime Colab dan endpoint konversi GGUF belum dibuat. Belum ada berkas yang diproses.")}>Buat model untuk diunduh</button></div><p className="cth-muted">Tombol ekspor saat ini hanya menjelaskan prasyarat. Tidak membuat unduhan palsu.</p></section></div>
-    {notice && <Notice tone="warning">{notice}</Notice>}
-    <Notice>Konfirmasi ekspor nanti menampilkan proyek, model, dan dataset yang dipakai. Fine-tuning memakai data pilihanmu; model dasar tetap membawa pengetahuan pelatihan sebelumnya.</Notice>
-  </>;
+}
+
+function Glyph({ name, ...props }) {
+  const paths = {
+    model: "M12 3 3 8l9 5 9-5-9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5",
+    refresh:
+      "M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 6M4 12l2 6a7 7 0 0 0 12-1",
+    send: "M12 19V5m-6 6 6-6 6 6",
+    restore:
+      "M7 18H6a4 4 0 0 1-1-7 7 7 0 0 1 13-2 5 5 0 0 1 0 9h-1m-5-8v10m-4-4 4 4 4-4",
+    chat: "M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-6 3V6a2 2 0 0 1 2-2Z",
+    copy: "M9 9h11v12H9V9Zm6-4V3H3v13h2",
+    check: "m5 12 4 4L19 6",
+    more: "M5 6h14M5 12h14M5 18h14",
+  };
+
+  return (
+    <svg
+      width="19"
+      height="19"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.65"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      <path d={paths[name] || paths.model} />
+    </svg>
+  );
+}
+
+function dateLabel(run) {
+  const value = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z/.exec(run || "");
+
+  if (!value) return "Run tersimpan";
+
+  const date = new Date(
+    `${value[1]}-${value[2]}-${value[3]}` +
+      `T${value[4]}:${value[5]}:${value[6]}Z`,
+  );
+
+  return date.toLocaleString("id-ID", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Jakarta",
+  });
+}
+
+export default function ModelTesting({ onNavigate }) {
+  const { selectedProject } = useWorkspace();
+  const projectId = selectedProject?.id;
+
+  const [models, setModels] = useState([]);
+  const [selected, setSelected] = useState("");
+  const [model, setModel] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [restore, setRestore] = useState({ status: "idle" });
+  const [startingRestore, setStartingRestore] = useState(false);
+  const [messages, setMessages] = useState([]);
+  const [question, setQuestion] = useState("");
+  const [mode, setMode] = useState("qwen");
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState("");
+
+  const scope = useRef("");
+  const pending = useRef(false);
+  const scroll = useRef(null);
+
+  const selectedModel = models.find((item) => item.job_id === selected);
+
+  const restoring = startingRestore || ACTIVE.includes(restore.status);
+
+  const busy = sending || restoring;
+
+  const available = model?.status === "available" && model.job_id === selected;
+
+  scope.current = `${projectId || ""}:${selected}`;
+
+  const refresh = useCallback(
+    async (signal) => {
+      if (!projectId || !selected) return;
+
+      const key = `${projectId}:${selected}`;
+
+      setChecking(true);
+      setError("");
+
+      try {
+        const result = await request(
+          `/status/${projectId}?job_id=${selected}`,
+          {},
+          signal,
+          120000,
+        );
+
+        if (scope.current === key && !signal?.aborted) {
+          setModel(result);
+        }
+      } catch (err) {
+        if (scope.current === key && !signal?.aborted) {
+          setModel(null);
+          setError(err.message);
+        }
+      } finally {
+        if (scope.current === key && !signal?.aborted) {
+          setChecking(false);
+        }
+      }
+    },
+    [projectId, selected],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    setModels([]);
+    setSelected("");
+    setModel(null);
+    setMessages([]);
+    setRestore({ status: "idle" });
+    setQuestion("");
+    setError("");
+    setSending(false);
+    setStartingRestore(false);
+
+    pending.current = false;
+
+    if (!projectId) {
+      return () => controller.abort();
+    }
+
+    setLoading(true);
+
+    request(`/models/${projectId}`, {}, controller.signal, 30000)
+      .then((data) => {
+        if (controller.signal.aborted) return;
+
+        if (!Array.isArray(data.models)) {
+          throw new Error("Daftar model tidak sesuai.");
+        }
+
+        setModels(data.models);
+        setSelected(data.models[0]?.job_id || "");
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted) {
+          setError(err.message);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      });
+
+    return () => controller.abort();
+  }, [projectId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    setModel(null);
+    setMessages([]);
+    setQuestion("");
+    setSending(false);
+
+    pending.current = false;
+
+    const timer = window.setTimeout(() => refresh(controller.signal), 0);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!projectId || !selected) return;
+
+    const controller = new AbortController();
+    const key = `${projectId}:${selected}`;
+    let timer;
+
+    async function poll() {
+      try {
+        const value = await request(
+          `/restore/${projectId}`,
+          {},
+          controller.signal,
+          30000,
+        );
+
+        if (controller.signal.aborted || scope.current !== key) {
+          return;
+        }
+
+        if (value.job_id === selected) {
+          setRestore(value);
+        }
+
+        if (value.job_id === selected && ACTIVE.includes(value.status)) {
+          timer = setTimeout(poll, 2000);
+        } else if (value.job_id === selected && value.status === "completed") {
+          refresh(controller.signal);
+        }
+      } catch (err) {
+        if (!controller.signal.aborted && scope.current === key) {
+          setError(err.message);
+        }
+      }
+    }
+
+    const start = setTimeout(poll, 0);
+
+    return () => {
+      clearTimeout(start);
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [projectId, selected, startingRestore, refresh]);
+
+  useEffect(() => {
+    if (scroll.current) {
+      scroll.current.scrollTop = scroll.current.scrollHeight;
+    }
+  }, [messages, sending]);
+
+  async function restoreModel() {
+    if (busy || !selected || pending.current) {
+      return;
+    }
+
+    const key = scope.current;
+
+    pending.current = true;
+    setStartingRestore(true);
+    setError("");
+
+    try {
+      const value = await request(
+        "/restore",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            project_id: projectId,
+            job_id: selected,
+          }),
+        },
+        undefined,
+        30000,
+      );
+
+      if (scope.current === key) {
+        setRestore(value);
+      }
+    } catch (err) {
+      if (scope.current === key) {
+        setError(err.message);
+      }
+    } finally {
+      if (scope.current === key) {
+        setStartingRestore(false);
+        pending.current = false;
+      }
+    }
+  }
+
+  async function send(event) {
+    event?.preventDefault();
+
+    if (!available || !question.trim() || busy || checking || pending.current) {
+      return;
+    }
+
+    const key = scope.current;
+    const text = question.trim();
+    const id = `${Date.now()}-${Math.random()}`;
+
+    pending.current = true;
+
+    setSending(true);
+    setError("");
+    setQuestion("");
+
+    setMessages((previous) => [
+      ...previous.slice(-38),
+      {
+        id,
+        role: "user",
+        text,
+      },
+    ]);
+
+    try {
+      const value = await request("/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          project_id: projectId,
+          job_id: selected,
+          question: text,
+          mode,
+        }),
+      });
+
+      if (scope.current !== key) return;
+
+      if (typeof value.answer !== "string" || !Array.isArray(value.sources)) {
+        throw new Error("Jawaban backend tidak sesuai.");
+      }
+
+      setMessages((previous) => [
+        ...previous,
+        {
+          id: `${id}-reply`,
+          role: "assistant",
+          text: value.answer,
+          sources: value.sources,
+          mode: value.mode,
+          notice: value.notice,
+        },
+      ]);
+    } catch (err) {
+      if (scope.current === key) {
+        setError(err.message);
+        setQuestion((previous) => previous || text);
+      }
+    } finally {
+      if (scope.current === key) {
+        setSending(false);
+        pending.current = false;
+      }
+    }
+  }
+
+  function navigate(page) {
+    if (onNavigate) {
+      onNavigate(page);
+    } else {
+      window.location.hash = page;
+    }
+  }
+
+  async function copy(item) {
+    try {
+      await navigator.clipboard.writeText(item.text);
+      setCopied(item.id);
+    } catch {
+      setError("Teks belum dapat disalin oleh browser.");
+    }
+  }
+
+  return (
+    <div className="cth-test">
+      <header className="mt-title">
+        <div>
+          <span className="mt-eyebrow">CHANTHECNO / MODEL STUDIO</span>
+          <h1>
+            Model Testing<span>.</span>
+          </h1>
+          <p>Model yang sudah kamu latih, siap diuji kembali.</p>
+        </div>
+
+        <span className="mt-project">
+          {selectedProject?.name || "Pilih proyek"}
+        </span>
+      </header>
+
+      {error && (
+        <div className="mt-alert" role="alert">
+          {error}
+          <button
+            type="button"
+            onClick={() => setError("")}
+            aria-label="Tutup pesan"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      <div className="mt-layout">
+        <aside className="mt-library">
+          <div className="mt-library-head">
+            <h2>Model tersimpan</h2>
+            <span>{models.length}</span>
+          </div>
+
+          <p className="mt-library-note">
+            Hasil training selesai pada proyek ini.
+          </p>
+
+          <div className="mt-models">
+            {loading && <p className="mt-muted">Memuat daftar model…</p>}
+
+            {!loading && !models.length && (
+              <div className="mt-no-model">
+                <Glyph name="model" />
+                <strong>
+                  {projectId
+                    ? "Belum ada model selesai"
+                    : "Pilih proyek dahulu"}
+                </strong>
+                <p>
+                  Daftar ini membaca riwayat hasil training, bukan hanya
+                  pekerjaan terakhir.
+                </p>
+              </div>
+            )}
+
+            {models.map((item) => (
+              <button
+                type="button"
+                className={`mt-model ${
+                  selected === item.job_id ? "is-selected" : ""
+                }`}
+                key={item.job_id}
+                disabled={busy}
+                onClick={() => {
+                  setSelected(item.job_id);
+                  setRestore({ status: "idle" });
+                }}
+              >
+                <span className="mt-model-icon">
+                  <Glyph name="model" />
+                </span>
+
+                <span className="mt-model-info">
+                  <strong>{item.model_name}</strong>
+                  <small>{dateLabel(item.run_id)} WIB</small>
+                  <span className="mt-backup">
+                    {item.backup_verified
+                      ? "Cadangan Drive terverifikasi"
+                      : item.local_available
+                        ? "Salinan lokal tersedia"
+                        : "Cadangan perlu diperiksa"}
+                  </span>
+                </span>
+
+                {selected === item.job_id && (
+                  <span className="mt-selected-dot" />
+                )}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-library-footer">
+            <Glyph name="restore" />
+            <p>
+              <strong>Tidak perlu training ulang.</strong>
+              <br />
+              Pulihkan hasil tersimpan ketika runtime berganti.
+            </p>
+          </div>
+        </aside>
+
+        <section className="mt-chat">
+          <header className="mt-chat-head">
+            <div className="mt-chat-heading">
+              <span className="mt-model-mark">CT</span>
+              <div>
+                <h2>{selectedModel?.model_name || "Pilih model tersimpan"}</h2>
+
+                <span className={`mt-runtime ${available ? "is-ready" : ""}`}>
+                  <i />
+                  {checking
+                    ? "Memeriksa berkas…"
+                    : available
+                      ? "Berkas tersedia di runtime"
+                      : "Menunggu pemulihan model"}
+                </span>
+              </div>
+            </div>
+
+            <button
+              className="mt-icon-button"
+              type="button"
+              onClick={() => refresh()}
+              disabled={!selected || busy || checking}
+              aria-label="Periksa model"
+              title="Periksa model"
+            >
+              <Glyph name="refresh" />
+            </button>
+          </header>
+
+          <div className="mt-toolbar">
+            <label>
+              Mode
+              <select
+                aria-label="Mode jawaban"
+                value={mode}
+                onChange={(event) => setMode(event.target.value)}
+                disabled={busy}
+              >
+                <option value="qwen">Qwen · hasil training</option>
+                <option value="extractive">Kutipan sumber</option>
+              </select>
+            </label>
+
+            <details className="mt-details">
+              <summary>
+                <Glyph name="more" />
+                Detail model
+              </summary>
+
+              <div>
+                <strong>Run yang dipilih</strong>
+                <code>{selectedModel?.run_id || "—"}</code>
+                <p>
+                  Model dimuat di Colab ketika pertanyaan dikirim. Setiap
+                  pertanyaan diproses mandiri.
+                </p>
+                <button
+                  type="button"
+                  disabled={busy || !messages.length}
+                  onClick={() => setMessages([])}
+                >
+                  Bersihkan percakapan
+                </button>
+              </div>
+            </details>
+          </div>
+
+          <div
+            className="mt-transcript"
+            ref={scroll}
+            aria-live="polite"
+            aria-busy={busy}
+          >
+            {!messages.length && (
+              <div className="mt-welcome">
+                <div className="mt-orbit">
+                  <span>CT</span>
+                </div>
+
+                <span className="mt-eyebrow">WORKSPACE PERCAKAPAN</span>
+
+                <h3>
+                  {available
+                    ? "Mulai dari satu pertanyaan."
+                    : "Bawa kembali modelmu."}
+                </h3>
+
+                <p>
+                  {available
+                    ? "Uji identitas, pengetahuan, dan kesesuaian jawaban dengan sumber proyekmu."
+                    : "Pilih hasil training di sebelah kiri, hubungkan T4, lalu pulihkan model beserta indeks sumbernya."}
+                </p>
+
+                {available ? (
+                  <div className="mt-prompts">
+                    {["Apa itu ChanThecno?", "Siapa penciptamu?"].map(
+                      (text) => (
+                        <button
+                          type="button"
+                          key={text}
+                          onClick={() => setQuestion(text)}
+                        >
+                          {text}
+                          <span>↗</span>
+                        </button>
+                      ),
+                    )}
+                  </div>
+                ) : (
+                  <div className="mt-welcome-actions">
+                    <button
+                      className="mt-primary"
+                      type="button"
+                      onClick={restoreModel}
+                      disabled={!selected || busy || checking}
+                    >
+                      <Glyph name="restore" />
+                      {restoring ? "Memulihkan…" : "Pulihkan & jalankan"}
+                    </button>
+
+                    <button
+                      className="mt-link"
+                      type="button"
+                      onClick={() => navigate("colab")}
+                      disabled={busy}
+                    >
+                      Hubungkan T4 ↗
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {messages.map((item) => (
+              <article className={`mt-message ${item.role}`} key={item.id}>
+                <span className="mt-message-avatar">
+                  {item.role === "user" ? "K" : "CT"}
+                </span>
+
+                <div className="mt-message-content">
+                  <div className="mt-message-label">
+                    <strong>
+                      {item.role === "user"
+                        ? "Kamu"
+                        : item.mode === "qwen"
+                          ? selectedModel?.model_name
+                          : "Kutipan sumber"}
+                    </strong>
+
+                    {item.role === "assistant" && (
+                      <button
+                        type="button"
+                        className="mt-copy"
+                        onClick={() => copy(item)}
+                        aria-label="Salin jawaban"
+                      >
+                        <Glyph name={copied === item.id ? "check" : "copy"} />
+                      </button>
+                    )}
+                  </div>
+
+                  <p>{item.text}</p>
+
+                  {item.sources?.length > 0 && (
+                    <details className="mt-sources">
+                      <summary>{item.sources.length} sumber</summary>
+                      <p>{item.sources.join(", ")}</p>
+                      {item.notice && <small>{item.notice}</small>}
+                    </details>
+                  )}
+                </div>
+              </article>
+            ))}
+
+            {sending && (
+              <div className="mt-thinking" role="status">
+                <span />
+                <span />
+                <span />
+                Colab sedang memproses pertanyaan…
+              </div>
+            )}
+          </div>
+
+          {(restoring ||
+            ["completed", "failed", "uncertain"].includes(restore.status)) && (
+            <div className={`mt-restore-state ${restore.status}`} role="status">
+              <strong>
+                {restore.status === "completed"
+                  ? "Pemulihan selesai"
+                  : restoring
+                    ? "Memulihkan model"
+                    : "Pemulihan perlu diperiksa"}
+              </strong>
+
+              <span>{restore.message}</span>
+
+              {restoring && (
+                <progress
+                  max="100"
+                  {...(restore.status === "uploading"
+                    ? { value: restore.percent || 0 }
+                    : {})}
+                />
+              )}
+            </div>
+          )}
+
+          {!available && model?.message && !restoring && (
+            <p className="mt-state-note">{model.message}</p>
+          )}
+
+          <footer className="mt-compose-wrap">
+            <form className="mt-compose" onSubmit={send}>
+              <textarea
+                aria-label="Pesan untuk model"
+                placeholder={
+                  available
+                    ? "Tanyakan sesuatu tentang sumber proyekmu…"
+                    : "Pertanyaan aktif setelah model dipulihkan."
+                }
+                value={question}
+                onChange={(event) => setQuestion(event.target.value)}
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Enter" &&
+                    !event.shiftKey &&
+                    !event.nativeEvent.isComposing
+                  ) {
+                    event.preventDefault();
+                    send();
+                  }
+                }}
+                maxLength={2000}
+                rows={2}
+                disabled={!selected || busy}
+              />
+
+              <button
+                className="mt-send"
+                aria-label="Kirim pertanyaan"
+                type="submit"
+                disabled={!available || !question.trim() || busy || checking}
+              >
+                <Glyph name="send" />
+              </button>
+            </form>
+
+            <div className="mt-compose-note">
+              <span>
+                Jawaban model dapat keliru. Pertanyaan tidak menjadi data
+                training.
+              </span>
+              <span>{question.length}/2.000</span>
+            </div>
+          </footer>
+        </section>
+      </div>
+    </div>
+  );
 }

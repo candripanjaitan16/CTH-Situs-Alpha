@@ -1,0 +1,63 @@
+.cth-app .cth-grid.training-layout:has(.cth-neural-field) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.cth-neural-field {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  min-height: 320px;
+  overflow: hidden;
+  isolation: isolate;
+  background: #010409;
+}
+
+.cth-neural-field canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.cth-neural-field-caption {
+  position: absolute;
+  right: 16px;
+  bottom: 18px;
+  left: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: #557b97;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  line-height: 1.5;
+  letter-spacing: 2px;
+  pointer-events: none;
+}
+
+.cth-neural-field-caption span {
+  width: 4px;
+  height: 4px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #2b526e;
+}
+
+.cth-neural-field-caption span.is-active {
+  background: #4bcfff;
+  box-shadow: 0 0 8px #21bcff66;
+}
+
+@media (max-width: 700px) {
+  .cth-neural-field {
+    min-height: 300px;
+  }
+
+  .cth-neural-field-caption {
+    bottom: 14px;
+    font-size: 7px;
+    letter-spacing: 1px;
+  }
+}

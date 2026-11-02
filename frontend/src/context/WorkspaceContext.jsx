@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { getDriveStatus, getProjects, createProject } from "../services/api";
 
+import { listDatasets, uploadDataset, saveDatasetUrl, deleteDataset, syncDataset } from "../services/datasets";
+
 const WorkspaceContext = createContext(null);
 function savedProject() {
   try { return localStorage.getItem("cth-selected-project") || ""; } catch { return ""; }
@@ -15,6 +17,10 @@ export function WorkspaceProvider({ children }) {
   const [selectedId, setSelectedId] = useState(savedProject);
   const [drive, setDrive] = useState({ status: "loading", message: "Memeriksa koneksi..." });
   const [drafts, setDrafts] = useState({});
+  const [datasetLists, setDatasetLists] = useState({});
+  const [datasetLoading, setDatasetLoading] = useState({});
+  const [datasetErrors, setDatasetErrors] = useState({});
+  const datasetRequests = useRef(new Map());
   const projectsRequest = useRef(null);
   const driveRequest = useRef(null);
   const creating = useRef(false);
@@ -88,7 +94,70 @@ export function WorkspaceProvider({ children }) {
     } finally { creating.current = false; setIsCreating(false); }
   }, [refreshProjects, selectProject]);
 
+  const refreshDatasets = useCallback(async (projectId) => {
+    const key = String(projectId);
+    if (!projectId) return;
+    datasetRequests.current.get(key)?.abort();
+    const controller = new AbortController();
+    datasetRequests.current.set(key, controller);
+    setDatasetLoading(previous => ({ ...previous, [key]: true }));
+    try {
+      const data = await listDatasets(projectId, controller.signal);
+      if (!controller.signal.aborted) {
+        setDatasetLists(previous => ({ ...previous, [key]: data }));
+        setDatasetErrors(previous => ({ ...previous, [key]: "" }));
+      }
+      return data;
+    } catch (error) {
+      if (!controller.signal.aborted) setDatasetErrors(previous => ({ ...previous, [key]: error.message }));
+      return null;
+    } finally {
+      if (!controller.signal.aborted) setDatasetLoading(previous => ({ ...previous, [key]: false }));
+      if (datasetRequests.current.get(key) === controller) datasetRequests.current.delete(key);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!selectedId || !projects.some(project => String(project.id) === selectedId)) return;
+    refreshDatasets(selectedId);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible" && !datasetRequests.current.has(selectedId)) refreshDatasets(selectedId);
+    }, 10000);
+    return () => {
+      window.clearInterval(timer);
+      datasetRequests.current.get(selectedId)?.abort();
+    };
+  }, [selectedId, projects, refreshDatasets]);
+
+  useEffect(() => () => {
+    for (const controller of datasetRequests.current.values()) controller.abort();
+  }, []);
+
+  async function uploadDatasetFile(projectId, file) {
+    const result = await uploadDataset(projectId, file);
+    await refreshDatasets(projectId);
+    return result;
+  }
+  async function addDatasetUrl(projectId, url) {
+    const result = await saveDatasetUrl(projectId, url);
+    await refreshDatasets(projectId);
+    return result;
+  }
+  async function removeDataset(projectId, sourceId) {
+    const result = await deleteDataset(projectId, sourceId);
+    await refreshDatasets(projectId);
+    return result;
+  }
+  async function retryDatasetSync(projectId, sourceId) {
+    const result = await syncDataset(projectId, sourceId);
+    await refreshDatasets(projectId);
+    return result;
+  }
+
   const selectedProject = projects.find(p => String(p.id) === selectedId) || null;
+  const datasets = selectedProject ? datasetLists[String(selectedProject.id)] || [] : [];
+  const datasetsLoading = Boolean(datasetLoading[selectedId]);
+  const datasetsError = datasetErrors[selectedId] || "";
   const sources = selectedProject ? drafts[String(selectedProject.id)] || [] : [];
   const addSource = (projectId, source) => setDrafts(previous => ({
     ...previous, [projectId]: [...(previous[projectId] || []), source],
@@ -99,7 +168,9 @@ export function WorkspaceProvider({ children }) {
 
   return <WorkspaceContext.Provider value={{ projects, projectsLoading, projectsError,
     selectedProject, selectProject, refreshProjects, drive, refreshDrive, addProject,
-    isCreating, sources, drafts, addSource, removeSource }}>{children}</WorkspaceContext.Provider>;
+    isCreating, sources, drafts, addSource, removeSource,
+    datasets, datasetsLoading, datasetsError, refreshDatasets, uploadDatasetFile,
+    addDatasetUrl, removeDataset, retryDatasetSync }}>{children}</WorkspaceContext.Provider>;
 }
 export function useWorkspace() {
   const value = useContext(WorkspaceContext);

@@ -1,4 +1,3 @@
-# Environment dan credentials
 .venv/
 venv/
 .env
@@ -10,30 +9,29 @@ token*.json
 *.pem
 *.key
 
-# Data dan status lokal
 *.db
 *.db-*
 *.sqlite
 *.sqlite-*
 colab_runtime_state.json
+.colab-runtime.lock
 workspace/
 datasets/
 training_results/
 models/
 
-# Python
 __pycache__/
 *.py[cod]
 
-# Frontend
 node_modules/
 dist/
 
-# Hasil model
 *.gguf
 *.safetensors
 *.pt
 *.pth
 
-# Log
 *.log
+
+build/
+*.egg-info/
