@@ -39,6 +39,11 @@ def main():
         assert (first/'frontend/dist/index.html').is_file()
         assert not (first/'frontend/node_modules').exists()
         assert (first/'requirements-training.txt').is_file()
+        assert (first/'training/retrieval.py').is_file()
+        assert (first/'backend/app/dataset_manifest.py').is_file()
+        installed_version=subprocess.check_output([str(first/'backend/.venv/bin/python'),'-c','import sys,json; print(json.dumps(list(sys.version_info[:3])))'],text=True)
+        assert json.loads(installed_version)==list(sys.version_info[:3])
+        print('PASS installed backend interpreter matches installer:',sys.version.split()[0],flush=True)
         assert not list(first.rglob('token*.json'))
         data=root/'share/chanthecno-hub/data'
         data.mkdir(parents=True,exist_ok=True)

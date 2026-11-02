@@ -1,16 +1,17 @@
 # Validasi perubahan
 
-Dijalankan pada cloud Linux, Python 3.12.14, Node 24.19.0/npm 11.9.0. Tidak ada akses Google Drive/Colab nyata, alokasi GPU, training, inferensi model berat, atau pembacaan file autentikasi pribadi. Data tes seluruhnya berada di direktori sementara. Tidak ada reset data laptop pengguna.
+Dijalankan pada cloud Linux, Python **3.10.12 dan 3.12.14**, Node 24.19.0/npm 11.9.0. Tidak ada akses Google Drive/Colab nyata, alokasi GPU, training, inferensi model berat, atau pembacaan file autentikasi pribadi. Data tes seluruhnya berada di direktori sementara. Tidak ada reset data laptop pengguna.
 
 ## Hasil
 
 | Pemeriksaan | Hasil |
 | --- | --- |
-| `python -m unittest discover -s tests -v` | 32 tes offline lulus |
+| `python -m unittest discover -s tests -v` | **67 tes offline lulus pada masing-masing interpreter** |
 | `npm --prefix frontend run build` | Lulus, frontend produksi dibangun |
 | `npm --prefix frontend run lint` | Exit 0; 18 warning kode React yang masih perlu perbaikan terpisah |
-| `python3 tests/smoke_install.py` | Instalasi nyata dua kali, production HTTP/asset, pengunci pembaruan, shutdown SIGTERM, proses lain dipertahankan, uninstall dengan data/konfigurasi tetap ada |
+| `python3 tests/smoke_install.py` | Instalasi nyata dua kali pada Python 3.10.12 dan 3.12.14, interpreter virtualenv cocok, production HTTP/asset, pengunci pembaruan, shutdown SIGTERM, proses lain dipertahankan, uninstall dengan data/konfigurasi tetap ada |
 | `python3 tests/browser_smoke.py` | Chromium desktop 1440×1000 dan mobile 390×844 lulus; API mock |
+| `python3 tests/browser_dataset_smoke.py` | Pilihan dataset, status upload/verifikasi/gagal, retry tanpa upload ulang dan payload dataset_ids lulus dengan API mock |
 | `python -m compileall -q backend/app training tools tests chanthecno-hub` | Lulus |
 | Pemeriksaan whitespace Git | Lulus |
 
@@ -20,13 +21,22 @@ Uji browser memeriksa nama model dinamis, pengiriman chat, salin jawaban, percak
 
 - [Desktop](screenshots/model-testing-desktop.png)
 - [Mobile](screenshots/model-testing-mobile.png)
+- [Pilihan dan ringkasan dataset (fixture)](screenshots/dataset-training-selection.png)
 
-Untuk mengulang browser smoke, gunakan Python dengan Playwright (divalidasi 1.62.0) dan Chromium lokal di `/usr/bin/chromium`. Suite backend hanya membutuhkan `requirements-dev.txt`; smoke installer membutuhkan akses registry paket dan port lokal 8000 kosong. Browser smoke memakai port 8765. Tidak ada dependensi Playwright dalam runtime aplikasi.
+Untuk mengulang browser smoke, gunakan Python dengan Playwright (divalidasi 1.62.0) dan Chromium lokal di `/usr/bin/chromium`. Suite backend hanya membutuhkan `requirements-dev.txt`; smoke installer membutuhkan akses registry paket dan port lokal 8000 kosong. Kedua browser smoke memakai port 8765 dan dijalankan bergantian. Tidak ada dependensi Playwright dalam runtime aplikasi.
 
-Starlette saat ini menampilkan peringatan deprecation kompatibilitas TestClient/httpx; seluruh tes tetap berjalan dan lulus. CI yang ditambahkan menjalankan suite offline, build dan lint; eksekusi CI pada GitHub belum diverifikasi di cloud ini.
+Starlette saat ini menampilkan peringatan deprecation kompatibilitas TestClient/httpx; seluruh tes tetap berjalan dan lulus. CI memakai matriks Python 3.10.12/3.12 untuk suite offline, build dan lint; eksekusi CI pada GitHub belum diverifikasi di cloud ini.
+
+## Tambahan bukti kompatibilitas, Drive, dan retrieval
+
+- Interpreter Python 3.10.12 sungguhan dipasang terpisah di workspace, tanpa mengganti Python sistem. `pip install -r requirements-dev.txt` dan `pip check` berhasil dengan pin backend yang sama. Pengujian bukan sekadar parse/simulasi nomor versi. Google API Core tetap menampilkan FutureWarning penghentian dukungan upstream 3.10; ini dicatat, tidak disembunyikan atau dipaksa dengan downgrade.
+- Fake Drive menjalankan protokol daftar folder, generateIds, upload, kehilangan acknowledgment, dan GET metadata. Tes menolak perbedaan ID/folder/ukuran/checksum, file trash, tag hash tanpa checksum API, pilihan proyek lain, perubahan lokal berukuran sama, dan satu pilihan pending di antara yang sudah saved. Retry memakai ID yang sama; tidak menjalankan create kedua ketika upload pertama sebenarnya sudah selesai. Sumber lokal dipertahankan saat upload gagal. Dukungan checksum SHA-256 API dan fallback MD5 API diuji terpisah.
+- Endpoint start diuji langsung: sumber belum terverifikasi ditolak sebelum thread persiapan dibuat. Versi lokal diperiksa kembali di fungsi persiapan sebelum RuntimeBridge dibuat. Download paket dengan checksum berubah juga ditolak. Manifest per job dibuat sekali, diverifikasi digest, tetap sama setelah dataset baru ditambah, dan perubahan manifest menyebabkan resume ditolak sebelum model dimuat. Seluruh koneksi T4/model pada tes tersebut dimock.
+- Fixture retrieval berisi fakta dokumenter, USER/ASSISTANT, lanjutan chat multiline, soal, fakta umum, identitas palsu dalam chat, dan kalimat tidak relevan. Tes membuktikan kutipan/fakta asal yang tepat, penolakan tanpa bukti, offset yang cocok dengan passage, dan pencegahan fakta Alpha menjawab pertanyaan Beta. Indeks legacy tanpa penanda aman tidak dikutip.
+- Rebuild indeks diuji dari TXT fixture dengan nama/ID Drive tetap benar. Kode kontrol restore dijalankan hanya dengan path `/content` dipetakan ke direktori sementara dan **semua subprocess venv/pip/GPU diintersep mock**; tes membuktikan indeks lama bisa diganti tanpa menimpa bobot yang cocok. Tidak ada perintah GPU/Colab nyata yang dijalankan.
 
 ## Batas bukti
 
-Belum diverifikasi pada Linux Mint/RAM 4 GB secara langsung. OAuth desktop/browser sistem, izin Google, Colab API, sesi/T4, kualitas adapter, training/resume penuh, cadangan Drive nyata, dan inferensi GPU tetap memerlukan pengujian pengguna dengan akun sendiri. Tes mock tidak membuktikan integrasi itu. Launcher produksi dan HTTP lokal sudah diuji dengan dependensi nyata.
+Python 3.10.12 lokal cloud teruji; instalasi pada laptop Linux Mint/RAM 4 GB pengguna tetap belum diverifikasi. OAuth desktop/browser sistem, izin Google, Colab API, sesi/T4, kualitas adapter, training/resume penuh, cadangan Drive nyata, dan inferensi GPU tetap memerlukan pengujian pengguna dengan akun sendiri. Tes mock tidak membuktikan integrasi itu. Launcher produksi dan HTTP lokal sudah diuji dengan dependensi nyata.
 
 Resume web dan konversi/unduhan GGUF penuh belum ditambahkan. Resume CLI memerlukan checkpoint baru dengan checksum state lengkap serta kecocokan kode/data/config; checkpoint lama tidak otomatis dianggap dapat melanjutkan persis. Percakapan terisolasi di UI, tetapi model masih memproses setiap pertanyaan secara mandiri.

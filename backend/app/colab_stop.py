@@ -19,7 +19,7 @@ from app.colab_bridge import BridgeError, RuntimeBridge
 from app.colab_snapshot import FINAL_CHECK_CODE, snapshot_code
 from app.storage import atomic_json, MAX_UPLOAD_BYTES
 from app.database import get_db
-from app.drive_storage import upload_project_file, storage_connection, find_subfolder, project_folder_id
+from app.drive_storage import upload_project_file, storage_connection, find_subfolder, project_folder_id, verify_project_file
 
 
 router = APIRouter()
@@ -152,9 +152,10 @@ def verify_receipts(project_id, receipt_ids):
         receipt = record["upload"]
         if record["project_id"] != project_id or receipt.get("verified") is not True:
             raise BridgeError("Bukti upload sumber tidak sesuai proyek.")
-        remote = drive.files().get(fileId=receipt["file_id"], fields="size,trashed,parents,appProperties").execute()
-        if remote.get("trashed") or int(remote.get("size", -1)) != receipt["size"] or target not in remote.get("parents", []) or remote.get("appProperties", {}).get("cth_sha256") != receipt["sha256"]:
-            raise BridgeError("Sumber di Drive berubah atau tidak ditemukan. Runtime tidak dihentikan.")
+        try:
+            verify_project_file(drive, project_id, receipt['file_id'], 'datasets', receipt, target)
+        except (ValueError, KeyError, TypeError):
+            raise BridgeError("Sumber di Drive berubah atau tidak ditemukan. Runtime tidak dihentikan.") from None
         saved_sources.append({key: receipt[key] for key in ("file_id", "name", "size", "sha256")})
     return saved_sources
 

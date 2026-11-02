@@ -88,7 +88,7 @@ def inspect_model(bridge, project_id, job):
         run = contents(bridge, prefix + relative)
         if run is None:
             continue
-        if not files_present(run, {"run.json", "complete.json", "dataset.sqlite"}):
+        if not files_present(run, {"run.json", "complete.json", "dataset.sqlite", "source-index-version.json"}):
             return False
         adapter = contents(bridge, prefix + relative + "/adapter")
         return adapter is not None and files_present(
@@ -110,7 +110,7 @@ def inference_lock():
 
 def source_bundle():
     files = {}
-    for name in ("common.py", "source_answer.py"):
+    for name in ("common.py", "source_answer.py", "retrieval.py"):
         path = REPO / "training" / name
         if path.resolve() != path or not path.is_file() or path.stat().st_size > 262144:
             raise HTTPException(503, f"Kode training/{name} belum tersedia atau tidak valid.")
@@ -214,7 +214,7 @@ def testing_status(project_id: int, request: Request, job_id: str | None = None)
         return {
             **state, "status": "available" if present else "missing",
             "message": "Berkas model dan indeks sumber ditemukan. Model dimuat ketika pertanyaan dikirim."
-            if present else "Berkas model dan indeks sumber belum ditemukan di runtime ini. Catatan completed saja belum cukup untuk testing.",
+            if present else "Model atau indeks sumber aman belum tersedia di runtime ini. Gunakan Pulihkan & jalankan untuk membangun indeks dari TXT tersimpan; tidak perlu training ulang.",
         }
     except HTTPException:
         raise
@@ -262,6 +262,16 @@ def chat(body: ChatRequest, request: Request):
                 raise HTTPException(502, "Format sumber jawaban tidak sesuai.")
             if reply.get("mode") != body.mode:
                 raise HTTPException(502, "Mode jawaban tidak sesuai permintaan.")
+            evidence = reply.get('evidence', [])
+            if not isinstance(evidence, list) or len(evidence) > 3:
+                raise HTTPException(502, 'Format kutipan sumber tidak sesuai.')
+            for item in evidence:
+                if (not isinstance(item, dict) or item.get('source') not in sources
+                        or not isinstance(item.get('quote'), str) or len(item['quote']) > 800
+                        or not isinstance(item.get('start'), int) or not isinstance(item.get('end'), int)
+                        or item['start'] < 0 or item['end'] - item['start'] != len(item['quote'])
+                        or item.get('offset_scope') != 'passage'):
+                    raise HTTPException(502, 'Asal kutipan sumber tidak valid.')
             if reply["mode"] == "extractive":
                 basis = "project"
                 notice = "Kutipan pencarian kata; bukan jawaban generatif model."
@@ -275,7 +285,7 @@ def chat(body: ChatRequest, request: Request):
                 "project_id": body.project_id, "run_id": job["run_id"],
                 "model_name": job.get("model_name"), "answer": reply["answer"],
                 "sources": sources, "mode": reply["mode"],
-                "basis": basis, "notice": notice,
+                "basis": basis, "notice": notice, "evidence": evidence,
             }
         except HTTPException:
             raise

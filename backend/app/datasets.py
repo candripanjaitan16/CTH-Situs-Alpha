@@ -22,7 +22,7 @@ from app.database import get_db
 from app.storage import MAX_UPLOAD_BYTES
 from app.storage import atomic_json
 from app.colab_stop import local_only, project_row, verify_receipts
-from app.drive_storage import storage_connection, upload_project_file
+from app.drive_storage import storage_connection, upload_project_file, file_checksums
 
 router = APIRouter(prefix='/api/datasets', tags=['Datasets'])
 from app.paths import DATA_HOME
@@ -187,7 +187,7 @@ def store_file(project_id, name, kind, size, digest, staged, url=None):
 
 
 def ensure_sync(row, force=False):
-    if row['drive_status'] == 'saved' and row.get('receipt_id'):
+    if row['drive_status'] == 'saved' and row.get('receipt_id') and not force:
         return
     if not local_path(row).is_file():
         return
@@ -198,14 +198,14 @@ def ensure_sync(row, force=False):
             return
         THREADS.add(row['id'])
     try:
-        threading.Thread(target=sync_one, args=(row['project_id'],row['id']), daemon=True).start()
+        threading.Thread(target=sync_one, args=(row['project_id'],row['id'],force), daemon=True).start()
     except Exception:
         with THREAD_GUARD:
             THREADS.discard(row['id'])
         raise
 
 
-def sync_one(project_id, source_id):
+def sync_one(project_id, source_id, force=False):
     try:
         with SYNC_SLOT:
             DATA.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -215,11 +215,15 @@ def sync_one(project_id, source_id):
                 except BlockingIOError:
                     return
                 row = get_row(project_id, source_id)
-                if row['drive_status'] == 'saved' and row.get('receipt_id'):
+                if row['drive_status'] == 'saved' and row.get('receipt_id') and not force:
                     return
                 project_row(project_id)
                 update(row, drive_status='syncing', error=None)
-                receipt = upload_project_file(project_id, local_path(row), 'datasets')
+                size, md5, sha = file_checksums(local_path(row))
+                if size != row['size'] or sha != row['sha256']:
+                    raise ValueError('Versi lokal berubah; tidak mengunggah versi yang tidak cocok.')
+                receipt = upload_project_file(project_id, local_path(row), 'datasets',
+                    on_status=lambda phase: update(row, drive_status=phase, error=None))
                 if receipt.get('verified') is not True or receipt.get('sha256') != row['sha256'] or receipt.get('size') != row['size']:
                     raise RuntimeError('Upload belum terverifikasi.')
                 receipt_id = uuid4().hex
@@ -310,7 +314,7 @@ async def upload_txt(project_id: int, request: Request):
             raise HTTPException(400,'TXT kosong atau hanya berisi spasi.')
         row, duplicate = store_file(project_id,name,'txt',size,digest.hexdigest(),staged)
         ensure_sync(row)
-        return {'dataset':public(row),'duplicate':duplicate,'message':'TXT sudah tersimpan di disk backend. Status Drive diperiksa terpisah.'}
+        return {'dataset':public(get_row(project_id, row['id'])),'duplicate':duplicate,'message':'TXT sudah tersimpan di disk backend. Status Drive diperiksa terpisah.'}
     except UnicodeError:
         raise HTTPException(400,'Berkas harus berupa TXT UTF-8 yang valid.') from None
     finally:
@@ -356,9 +360,8 @@ def add_url(project_id: int, body: URLSource, request: Request):
 def retry_sync(project_id: int, source_id: str, request: Request):
     local_only(request);project_row(project_id)
     row = get_row(project_id,source_id)
-    if row['drive_status'] != 'saved':
-        update(row,next_retry=0)
-        ensure_sync(get_row(project_id,source_id),force=True)
+    update(row,next_retry=0)
+    ensure_sync(get_row(project_id,source_id),force=True)
     return public(get_row(project_id,source_id))
 
 

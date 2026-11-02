@@ -1,41 +1,16 @@
 import argparse
-import re
-import sqlite3
 from pathlib import Path
 from .common import REFUSAL, child
 
-STOPWORDS = {"apa", "apakah", "itu", "yang", "di", "ke", "dari", "dan", "atau", "untuk", "dengan", "saya", "aku", "kamu", "tolong", "jelaskan", "siapa", "bagaimana", "berapa", "kapan", "dimana", "adalah", "tentang", "sebutkan"}
-
-
-def words(text):
-    return set(re.findall(r"[^\W_]+", text.lower(), flags=re.UNICODE)) - STOPWORDS
-
-
-def retrieve(database, question, limit=3):
-    keys = words(question)
-    if not keys:
-        return []
-    matches = []
-    with sqlite3.connect(database) as conn:
-        for source, content in conn.execute("SELECT source,content FROM passages"):
-            overlap = keys & words(content)
-            coverage = len(overlap) / len(keys)
-            if not overlap or coverage < .5:
-                continue
-            matches.append((coverage, len(overlap), source, content))
-            matches.sort(key=lambda item: (-item[0], -item[1], len(item[3]), item[2]))
-            del matches[limit:]
-    return matches
+from .retrieval import words, retrieve, ROLE
 
 
 def answer_from_sources(database, question):
-    matches = retrieve(database, question)
-    if not matches:
-        return {"answer": REFUSAL, "sources": [], "mode": "extractive"}
+    evidence = retrieve(database, question)
     return {
-        "answer": "\n\n".join(item[3] for item in matches),
-        "sources": list(dict.fromkeys(item[2] for item in matches)),
-        "mode": "extractive",
+        "answer": "\n\n".join(item['quote'] for item in evidence) if evidence else REFUSAL,
+        "sources": list(dict.fromkeys(item['source'] for item in evidence)),
+        "evidence": evidence, "mode": "extractive",
     }
 
 
@@ -51,6 +26,9 @@ INFERENCE_SYSTEM = (
 
 
 def clean_answer(text):
+    role = ROLE.search(text)
+    if role:
+        text = text[:role.start()]
     for marker in ("<|im_start|>", "<|im_end|>", "\nUSER:", "\nASSISTANT:"):
         text = text.split(marker, 1)[0]
     text = text.strip()
@@ -92,7 +70,7 @@ def answer_with_qwen(run_dir, question, evidence):
             repetition_penalty=1.1, pad_token_id=tokenizer.eos_token_id, eos_token_id=tokenizer.eos_token_id)
     text = tokenizer.decode(output[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=True).strip()
     return {"answer": clean_answer(text), "sources": evidence["sources"],
-        "mode": "qwen", "basis": "mixed" if evidence["sources"] else "general",
+        "evidence": evidence.get("evidence", []), "mode": "qwen", "basis": "mixed" if evidence["sources"] else "general",
         "notice": "Sumber proyek tersedia; jawaban generatif dapat mencakup pengetahuan umum." if evidence["sources"] else "Pengetahuan umum model; tidak ditemukan sumber proyek yang relevan."}
 
 

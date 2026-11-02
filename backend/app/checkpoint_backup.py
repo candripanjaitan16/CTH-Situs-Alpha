@@ -59,6 +59,7 @@ CODE_NAMES = {
     "data.py",
     "train.py",
     "web_worker.py",
+    "retrieval.py",
 }
 
 

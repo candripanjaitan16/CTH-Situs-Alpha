@@ -141,6 +141,8 @@ def main():
                 CTH_JOB_FILE=str(status),
             )
 
+            manifest_file = job / "dataset-manifest.json"
+            write_json(manifest_file, config["dataset_manifest"])
             command = [
                 str(python),
                 "-u",
@@ -154,6 +156,8 @@ def main():
                 config["model_name"],
                 "--epochs",
                 str(config["epochs"]),
+                "--dataset-manifest",
+                str(manifest_file),
                 "--max-length",
                 "512",
                 "--save-steps",

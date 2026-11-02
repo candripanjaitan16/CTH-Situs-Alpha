@@ -5,9 +5,10 @@ import { previewDataset, restoreDataset } from "../services/datasets";
 
 const DRIVE_LABELS = {
   pending: "Drive: menunggu sinkronisasi",
-  syncing: "Drive: sedang menyimpan…",
-  saved: "Tersimpan di Drive",
-  failed: "Drive: perlu coba lagi",
+  syncing: "Drive: mengunggah…",
+  verifying: "Drive: memverifikasi ID, folder, ukuran, checksum…",
+  saved: "Drive terverifikasi",
+  failed: "Drive: gagal — coba sinkronkan kembali",
 };
 function sizeLabel(size) {
   return size >= 1048576 ? `${(size / 1048576).toFixed(1)} MB` : `${(size / 1024).toFixed(1)} KB`;
@@ -148,7 +149,7 @@ export default function Datasets({ onNavigate }) {
               <p className="cth-muted">Proyek: {selectedProject.name}</p>
               <label className="cth-upload">
                 <strong>{busy || "Pilih berkas TXT"}</strong>
-                <span>UTF-8 · tanpa batas 5 MB</span>
+                <span>UTF-8 · maksimal 64 MiB</span>
                 <input aria-label="Pilih berkas TXT" type="file" accept=".txt,text/plain" disabled={Boolean(busy)} onChange={readFile} />
               </label>
               <p className="cth-muted">Berkas dikirim langsung ke backend tanpa membaca seluruh isinya ke RAM browser. Kapasitas disk tetap membatasi penyimpanan.</p>
@@ -215,7 +216,7 @@ export default function Datasets({ onNavigate }) {
           <Notice>
             TXT yang pernah diunggah lewat CTH dicoba dimuat dari bukti upload lama, sehingga tidak perlu dipilih lagi.
             Training memakai TXT yang berstatus tersimpan di Drive. URL belum dipakai untuk training.
-            Simpan folder backend/workspace dan cth.db saat memindahkan aplikasi ke perangkat lain.
+            Data tersimpan di direktori aplikasi per pengguna, terpisah dari repositori. Gunakan cadangan lokal saat memindahkannya.
           </Notice>
         </>
       )}

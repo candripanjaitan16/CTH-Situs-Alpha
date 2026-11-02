@@ -1,3 +1,4 @@
+from .retrieval import create_index, documentary_spans, index_source, store_quote
 import hashlib
 import json
 import sqlite3
@@ -56,28 +57,14 @@ def encode_qa(tokenizer, record, max_length):
 def create_store(path):
     conn = sqlite3.connect(path)
     conn.execute("CREATE TABLE samples (id INTEGER PRIMARY KEY, digest TEXT UNIQUE, group_id TEXT, input_ids TEXT, labels TEXT, split TEXT)")
-    conn.execute("CREATE TABLE passages (id INTEGER PRIMARY KEY, source TEXT, content TEXT, digest TEXT UNIQUE)")
+    create_index(conn)
     return conn
 
 
 def add_passage(conn, source, content):
-    start = 0
-    while start < len(content):
-        end = min(start + 1200, len(content))
-        if end < len(content):
-            boundary = content.rfind(" ", start + 800, end)
-            if boundary > start:
-                end = boundary
-        passage = content[start:end].strip()
-        if passage:
-            digest = hashlib.sha256(passage.encode()).hexdigest()
-            conn.execute("INSERT OR IGNORE INTO passages(source,content,digest) VALUES(?,?,?)", (source, passage, digest))
-        if end == len(content):
-            break
-        start = max(start + 1, end - 200)
-        boundary = content.find(" ", start, end)
-        if boundary != -1:
-            start = boundary + 1
+    for quote, _, _ in documentary_spans(content):
+        store_quote(conn, source, quote)
+
 
 
 def add_sample(conn, input_ids, labels, group):
@@ -86,12 +73,13 @@ def add_sample(conn, input_ids, labels, group):
     conn.execute("INSERT OR IGNORE INTO samples(digest,group_id,input_ids,labels) VALUES(?,?,?,?)", (digest, group, encoded, json.dumps(labels)))
 
 
-def prepare_data(directory, manifest, tokenizer, max_length, database, seed):
+def prepare_data(directory, manifest, tokenizer, max_length, database, seed, source_names=None):
     conn = create_store(database)
     modes = set()
     try:
         for item in manifest:
             path = Path(directory) / item["name"]
+            source = (source_names or {}).get(item["name"], item["name"])
             if path.suffix.lower() == ".jsonl":
                 modes.add("supervised_qa")
                 with path.open(encoding="utf-8") as handle:
@@ -105,7 +93,7 @@ def prepare_data(directory, manifest, tokenizer, max_length, database, seed):
                             raise ValueError(f"{item['name']} baris {number}: {error}") from None
                         group = hashlib.sha256(context.encode()).hexdigest()
                         add_sample(conn, ids, labels, group)
-                        add_passage(conn, item["name"], context)
+                        add_passage(conn, source, context)
             else:
                 modes.add("text_adaptation")
                 with path.open(encoding="utf-8", errors="strict") as handle:
@@ -117,13 +105,15 @@ def prepare_data(directory, manifest, tokenizer, max_length, database, seed):
                             raise ValueError(f"Data biner ditemukan: {item['name']}")
                         if not text.strip():
                             continue
-                        add_passage(conn, item["name"], text)
                         tokens = tokenizer.encode(text, add_special_tokens=False)
                         for start in range(0, len(tokens), max_length - 1):
                             ids = tokens[start:start + max_length - 1] + [tokenizer.eos_token_id]
                             if len(ids) >= 2:
                                 group = hashlib.sha256(json.dumps(ids).encode()).hexdigest()
                                 add_sample(conn, ids, ids.copy(), group)
+            if path.suffix.lower() != ".jsonl":
+                with path.open(encoding="utf-8", errors="strict") as handle:
+                    index_source(conn, source, handle)
             conn.commit()
         groups = [row[0] for row in conn.execute("SELECT DISTINCT group_id FROM samples")]
         if len(groups) < 10:

@@ -75,8 +75,8 @@ def main():
                     shutil.rmtree(target)
             print('Program dihapus. Data, konfigurasi, token, dan cadangan pengguna dipertahankan.')
             return
-        if sys.version_info < (3, 12):
-            raise RuntimeError('Python 3.12+ dengan modul venv diperlukan.')
+        if sys.version_info < (3, 10):
+            raise RuntimeError('Python 3.10+ dengan modul venv diperlukan.')
         for tool in ('git', 'node', 'npm'):
             if not shutil.which(tool):
                 raise RuntimeError(f'{tool} belum tersedia. Lihat README untuk prasyarat.')

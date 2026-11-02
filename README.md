@@ -4,7 +4,7 @@ Dashboard lokal untuk dataset proyek, fine-tuning LoRA di Google Colab T4, cadan
 
 ## Instalasi dari GitHub (Linux, tanpa sudo)
 
-Prasyarat: Git, Python **3.12+** dengan modul `venv`/pip, dan Node.js **22.12+ atau 24 LTS** beserta npm. Validasi cloud memakai Python 3.12.14, Node 24.19.0, npm 11.9.0. Pada Linux Mint, pastikan paket Python menyediakan venv sebelum mulai. Installer tidak menjalankan sudo atau memasang paket sistem. Gunakan versi Node yang memenuhi batas Vite; Node bawaan Mint yang lebih tua mungkin perlu diperbarui oleh pengguna.
+Prasyarat: Git, Python **3.10+** dengan modul `venv`/pip, dan Node.js **22.12+ atau 24 LTS** beserta npm. Dependency yang dipatok, suite backend, dan installer produksi diuji memakai Python **3.10.12** serta Python 3.12.14 (cloud Linux), dengan Node 24.19.0/npm 11.9.0. Hasil ini bukan bukti instalasi pada laptop Linux Mint pengguna. Pada Linux Mint, pastikan paket Python menyediakan venv sebelum mulai. Installer tidak menjalankan sudo atau memasang paket sistem. Gunakan versi Node yang memenuhi batas Vite; Node bawaan Mint yang lebih tua mungkin perlu diperbarui oleh pengguna.
 
 ```bash
 git clone https://github.com/candripanjaitan16/Chanthecno-Training-Hub.git
@@ -23,6 +23,18 @@ export PATH="$HOME/.local/bin:$PATH"
 ```
 
 Installer memberikan petunjuk ini bila direktori bin belum ada dalam PATH dan tidak mengubah file shell pengguna secara otomatis.
+
+Python 3.10.12 dapat dipakai dengan dependency saat ini; tidak perlu mengganti Python sistem. Google API Core menampilkan FutureWarning bahwa pembaruan SDK berikutnya tidak lagi mendukung Python 3.10. Ini keterbatasan dukungan upstream, meskipun versi yang dipatok dan tes saat ini berjalan. Bila ingin interpreter lebih baru terpisah, misalnya Python 3.12 yang dikelola `uv`:
+
+```bash
+python3 -m pip install --user uv
+"$HOME/.local/bin/uv" python install 3.12
+cth_python="$("$HOME/.local/bin/uv" python find 3.12)"
+"$cth_python" tools/install.py
+```
+
+Perintah ini menambahkan interpreter pengguna, tidak mengganti `/usr/bin/python3`. Installer memakai interpreter yang menjalankannya untuk virtualenv backend. Tidak ada dependency backend yang diturunkan versinya untuk pengujian 3.10; dependency training/GPU di Colab diuji terpisah dan tidak termasuk klaim kompatibilitas dashboard lokal.
+
 
 ## Menjalankan dan keluar
 
@@ -84,7 +96,12 @@ Uninstall menghapus rilis program dan tautan perintah milik installer, **mempert
 ## Dataset, status training, dan cadangan
 
 - TXT UTF-8 disimpan bertahap ke disk backend dengan metadata SQLite, terisolasi per proyek; refresh/restart tidak menghilangkannya. Batas 64 MiB per TXT. Nama/path, NUL, teks kosong, dan duplikasi per proyek diperiksa.
-- Status **salinan lokal** dan **cadangan Drive** berbeda. Kegagalan upload tidak menghapus salinan lokal. URL hanya dicatat; aplikasi tidak mengambil isi situs atau menjalankan fetch URL otomatis.
+- Alur wajib: **upload browser → menyimpan lokal → mengunggah Drive → memverifikasi → siap dipilih untuk training**. UI membedakan menunggu, mengunggah, memverifikasi, terverifikasi, dan gagal. Retry pada halaman Datasets memakai berkas lokal, tanpa unggah ulang dari browser. URL hanya dicatat dan tidak diikutkan training.
+- Verifikasi Drive memakai ID file yang tepat, keanggotaan pada subfolder `datasets` dari folder proyek, status tidak di-trash, ukuran, serta checksum konten API. `sha256Checksum` dipakai bila tersedia; bila tidak, `md5Checksum` dibandingkan dengan MD5 dari byte lokal. Tag `appProperties.cth_sha256` hanya untuk pencarian kandidat deduplikasi, tidak cukup sebagai bukti konten. Jika API tidak memberi checksum yang dapat dibandingkan, dataset belum siap.
+- Dataset yang sama pada proyek yang sama memakai baris metadata yang sama. Upload menyimpan ID Drive yang dicadangkan **sebelum** mengirim byte dan mengunci berdasarkan proyek/checksum; retry setelah respons terputus memeriksa ID tersebut, bukan langsung membuat file baru. Kandidat file Drive yang sudah cocok juga digunakan kembali. Salinan lokal selalu dipertahankan saat gagal; tidak ada penghapusan Drive otomatis.
+- Pada Training Workspace, centang dataset secara eksplisit dan periksa ringkasan nama, ukuran, ID Drive, serta SHA-256 sebelum memberi konfirmasi. Hanya dataset terpilih yang diperiksa, bukan seluruh TXT proyek. Daftar dan bukti tetap tersedia setelah restart.
+- Backend menolak pilihan kosong/duplikat, URL, sumber proyek lain, versi lokal yang berubah, bukti palsu/tidak cocok, dan Drive yang belum terverifikasi. Pemeriksaan dilakukan **sebelum thread persiapan worker dibuat**, lalu diulang sebelum membuka koneksi runtime. Byte yang diunduh dari Drive untuk paket worker juga diperiksa ukuran dan SHA-256-nya. Menonaktifkan tombol UI bukan pengaman utama.
+- Setiap permintaan training baru membekukan manifest proyek, dataset ID, file/folder Drive, nama, ukuran, checksum dan metode verifikasi pada `data/workspace/training-web/manifests/<job_id>.json` beserta digest pada catatan job. File dibuat sekali; perubahan digest ditolak. Manifest disalin ke request worker dan `run.json` pada hasil training agar cadangan dapat melacak versi sumber. Menambah dataset membuat pilihan/run baru, tidak mengubah manifest lama.
 - Runtime dialokasikan, T4 terverifikasi, heartbeat worker, langkah optimizer, evaluasi/penyimpanan adapter, dan cadangan terverifikasi adalah bukti yang berbeda. `step == max_steps` belum berarti selesai.
 - Heartbeat worker harus baru agar progres dianggap aktif. Progres lama atau putus koneksi memberi status perlu diperiksa, tidak memicu worker/training kedua. Worker versi lama tanpa heartbeat perlu diperiksa; jangan memulai ulang training aktif hanya untuk memperbarui worker.
 - Pergantian proyek tidak mengambil alih runtime yang masih dipakai pekerjaan aktif/tidak pasti. Polling menjaga respons lama agar tidak menimpa pilihan baru. Kernel kontrol yang eksekusinya belum selesai tidak dihapus saat koneksi ditutup.
@@ -99,7 +116,7 @@ Uninstall menghapus rilis program dan tautan perintah milik installer, **mempert
 3. Hubungkan runtime proyek yang sesuai. Bila artefak model belum ada, klik **Pulihkan & jalankan** secara eksplisit. Pemulihan menyiapkan adapter/tokenizer/indeks dan lingkungan inferensi, bukan training baru. Artefak yang sudah cocok di runtime tidak diunggah ulang.
 4. Periksa status, lalu kirim pertanyaan. Ganti runtime berarti artefak perlu diperiksa/pulihkan lagi.
 
-Nama utama chat mengikuti `model_name`; identitas model dasar tetap ada dalam metadata. Mode generatif memakai adapter dan model dasar yang sama di Colab. Retrieval memilih passage sumber proyek; jika tidak relevan, jalur generatif tetap dapat memakai pengetahuan umum model tersebut. Keterangan dasar jawaban menyatakan sumber yang tersedia dan kemungkinan campuran pengetahuan umum, bukan jaminan atribusi faktual setiap kalimat. Mode **Kutipan sumber** hanya kutipan pencarian kata, bukan inferensi generatif.
+Nama utama chat mengikuti `model_name`; identitas model dasar tetap ada dalam metadata. Mode generatif memakai adapter dan model dasar yang sama di Colab. Retrieval memilih kalimat dokumenter relevan yang melewati filter; giliran USER/ASSISTANT/SYSTEM beserta lanjutannya, soal/latihan dan instruksi tidak dikutip. Pencocokan ini konservatif berbasis kata, sehingga dapat menolak parafrasa yang sebenarnya relevan. Asal bukti memuat nama sumber/ID Drive, passage dan offset kutipan. Indeks lama tanpa versi filter tidak dipakai untuk kutipan mentah; UI meminta Pulihkan & jalankan bila penanda indeks aman belum ada. Pemulihan membangun indeks dari TXT tanpa training ulang; pada run yang sudah ada, hanya indeks/penandanya diganti setelah checksum berkas model lain cocok. Jika tidak ada bukti dokumenter, mode kutipan menyatakan sumber tidak cukup; jalur generatif tetap dapat memakai pengetahuan umum model tersebut. Keterangan dasar jawaban menyatakan sumber yang tersedia dan kemungkinan campuran pengetahuan umum, bukan jaminan atribusi faktual setiap kalimat. Mode **Kutipan sumber** hanya kutipan kalimat dokumenter dari pencarian kata, bukan inferensi generatif. Bukti uji filter dan fallback mock tidak membuktikan kualitas adapter nyata meningkat.
 
 Dataset diperlakukan sebagai data, bukan instruksi sistem. Penanda peran tidak boleh diteruskan sebagai lanjutan chat. Pertanyaan tidak otomatis menjadi data training. Percakapan UI dipisah berdasarkan proyek dan run; setiap pertanyaan saat ini diproses mandiri di model (belum ada memori dialog model lintas pertanyaan). Tombol Percakapan baru membersihkan tampilan. Tidak ada API AI eksternal.
 

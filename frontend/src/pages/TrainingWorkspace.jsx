@@ -122,6 +122,7 @@ export default function TrainingWorkspace({ onNavigate }) {
   const [jobError, setJobError] = useState("");
   const [message, setMessage] = useState("");
   const [confirmed, setConfirmed] = useState(false);
+  const [selectedDatasetIds, setSelectedDatasetIds] = useState([]);
   const [lastChecked, setLastChecked] = useState(null);
   const [runtimeChecked, setRuntimeChecked] = useState(0);
   const [preflight, setPreflight] = useState(false);
@@ -138,12 +139,10 @@ export default function TrainingWorkspace({ onNavigate }) {
 
   const urlCount = datasets.filter((source) => source.type === "url").length;
 
-  const allSourcesReady =
-    txtSources.length > 0 &&
-    txtSources.length <= 500 &&
-    txtSources.every(
-      (source) => source.drive_status === "saved" && source.receipt_id,
-    );
+  const selectedSources = txtSources.filter(source => selectedDatasetIds.includes(source.id));
+  const selectedBytes = selectedSources.reduce((total, source) => total + source.size, 0);
+  const allSourcesReady = selectedSources.length > 0 && selectedSources.length <= 500 &&
+    selectedSources.every(source => source.local_saved && source.drive_status === "saved" && source.receipt_id);
 
   const activeJob = !TERMINAL.has(job.status);
 
@@ -174,6 +173,7 @@ export default function TrainingWorkspace({ onNavigate }) {
 
   const canStart =
     canCheck &&
+    preflight &&
     allSourcesReady &&
     !datasetsLoading &&
     !datasetsError &&
@@ -361,9 +361,7 @@ export default function TrainingWorkspace({ onNavigate }) {
   function startTraining() {
     if (!canStart) return;
 
-    const receipts = [
-      ...new Set(txtSources.map((source) => source.receipt_id)),
-    ];
+    const datasetIds = selectedSources.map(source => source.id);
 
     const selectedName = name;
     const selectedEpochs = Number(epochs);
@@ -375,7 +373,7 @@ export default function TrainingWorkspace({ onNavigate }) {
           project_id: id,
           model_name: selectedName,
           epochs: selectedEpochs,
-          source_receipts: receipts,
+          dataset_ids: datasetIds,
         }),
       );
 
@@ -434,9 +432,31 @@ export default function TrainingWorkspace({ onNavigate }) {
 
       {txtSources.length > 0 && !allSourcesReady && (
         <Notice tone="warning">
-          Tunggu semua TXT tersimpan di Drive. Maksimal 500 TXT per pekerjaan.
+          Pilih 1–500 TXT untuk training baru. Semua pilihan wajib tersimpan lokal dan terverifikasi di Drive.
         </Notice>
       )}
+
+      <section className="cth-card cth-section-gap" aria-label="Pilihan dataset training">
+        <h2>Dataset untuk training baru</h2>
+        <p className="cth-muted">Pilih versi TXT yang akan dipakai. URL tidak dipakai untuk training.</p>
+        <fieldset disabled={activeJob || Boolean(busy)} style={{ border: 0, padding: 0, maxHeight: 260, overflow: "auto" }}>
+          <legend className="cth-muted">{txtSources.length} TXT tersedia pada proyek ini</legend>
+          {txtSources.map(source => <label key={source.id} style={{ display: "flex", gap: 10, padding: "10px 0", alignItems: "flex-start" }}>
+            <input type="checkbox" aria-label={`Pilih dataset ${source.name}`} checked={selectedDatasetIds.includes(source.id)} onChange={event => {
+              setSelectedDatasetIds(previous => event.target.checked ? [...previous, source.id] : previous.filter(id => id !== source.id));
+              setConfirmed(false);
+            }} />
+            <span style={{ minWidth: 0, overflowWrap: "anywhere" }}><strong>{source.name}</strong><br />
+              <small>{(source.size / 1024).toFixed(1)} KiB · {source.local_saved ? "Salinan lokal tersedia" : "Pulihkan salinan lokal dahulu"} · {source.drive_status === "saved" ? "Drive terverifikasi" : source.drive_status === "failed" ? "Sinkronisasi gagal — retry di Datasets" : "Drive belum terverifikasi"}</small>
+            </span>
+          </label>)}
+        </fieldset>
+        <p role="status">{selectedSources.length} TXT dipilih · {(selectedBytes / 1024).toFixed(1)} KiB · {allSourcesReady ? "Siap diperiksa ulang backend sebelum training" : "Belum siap dilatih"}</p>
+        {selectedSources.length > 0 && <details><summary>Ringkasan versi yang dipilih</summary>
+          {selectedSources.map(source => <p key={source.id} style={{ overflowWrap: "anywhere" }}><strong>{source.name}</strong> · Drive ID: {source.drive_file_id || "belum ada"}<br /><small>SHA-256: {source.sha256}</small></p>)}
+        </details>}
+        <p className="cth-muted">Training baru membuat run dan manifest baru. Resume checkpoint adalah tindakan CLI terpisah yang mensyaratkan dataset, konfigurasi dan state cocok. Menambah dataset tidak melanjutkan run lama.</p>
+      </section>
 
       <div className="cth-grid training-layout">
         <section className="cth-card cth-visual-card">
@@ -651,7 +671,7 @@ export default function TrainingWorkspace({ onNavigate }) {
               disabled={!canStart}
               onClick={startTraining}
             >
-              {busy || "Mulai training"}
+              {busy || "Mulai training baru"}
             </button>
 
             {activeJob && (

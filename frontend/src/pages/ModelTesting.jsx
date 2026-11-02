@@ -391,6 +391,7 @@ export default function ModelTesting({ onNavigate }) {
           role: "assistant",
           text: value.answer,
           sources: value.sources,
+          evidence: value.evidence || [],
           mode: value.mode,
           notice: value.notice,
           basis: value.basis,
@@ -700,6 +701,9 @@ export default function ModelTesting({ onNavigate }) {
                     <details className="mt-sources">
                       <summary>{item.sources.length} sumber</summary>
                       <p>{item.sources.join(", ")}</p>
+                      {item.evidence?.map((span, index) => <blockquote key={index}>
+                        <p>{span.quote}</p><small>{span.source} · passage {span.passage_id}</small>
+                      </blockquote>)}
                     </details>
                   )}
                 </div>

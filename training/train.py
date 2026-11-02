@@ -22,6 +22,7 @@ def parse_args():
     parser.add_argument("--max-length", type=int, default=512, choices=[256, 512, 1024])
     parser.add_argument("--save-steps", type=int, default=25)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--dataset-manifest", help="Manifest lokal/Drive beku untuk run ini.")
     parser.add_argument("--resume-run", help="Nama run sebelumnya, bukan path checkpoint bebas.")
     return parser.parse_args()
 
@@ -52,6 +53,7 @@ def run(args):
         settings = {"model_id": MODEL_ID, "model_revision": MODEL_REVISION, "model_name": args.model_name,
                     "epochs": args.epochs, "learning_rate": args.learning_rate, "max_length": args.max_length,
                     "save_steps": args.save_steps, "seed": args.seed, "sources": inputs, "code_sha256": script_hash()}
+        settings["dataset_manifest"] = read_json(args.dataset_manifest) if args.dataset_manifest else None
         resume = None
         if args.resume_run:
             directory = child(project / "training_results", args.resume_run)
@@ -99,10 +101,13 @@ def run(args):
             tokenizer.padding_side = "right"
             database = directory / "dataset.sqlite"
             if not args.resume_run:
-                stats = prepare_data(data_dir, inputs, tokenizer, args.max_length, database, args.seed)
+                selected = (settings['dataset_manifest'] or {}).get('datasets', [])
+                source_names = {f'{index:04d}.txt': f"{item['name']} (Drive: {item['file_id']})" for index, item in enumerate(selected)}
+                stats = prepare_data(data_dir, inputs, tokenizer, args.max_length, database, args.seed, source_names)
                 if dataset_manifest(data_dir) != inputs:
                     raise ValueError("Dataset berubah selama persiapan. Buat run baru dari data yang tetap.")
                 write_json(directory / "dataset_stats.json", stats)
+                write_json(directory / "source-index-version.json", {"version": 2})
             model = AutoModelForCausalLM.from_pretrained(MODEL_ID, revision=MODEL_REVISION,
                 torch_dtype=torch.float16, device_map={"": 0}, trust_remote_code=False, use_safetensors=True, attn_implementation="eager")
             model.config.use_cache = False

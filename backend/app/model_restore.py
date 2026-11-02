@@ -1,6 +1,5 @@
 import base64
 import fcntl
-import hashlib
 import json
 import re
 import shutil
@@ -546,81 +545,29 @@ def unpack(archive, target, job):
 
 
 def rebuild_index(job, manifest, work, run, drive):
-    sources = manifest.get("source_backups") or []
-
+    from contextlib import closing
+    from importlib.util import spec_from_file_location, module_from_spec
+    sources = manifest.get('source_backups') or []
     if not sources or len(sources) > 500:
-        raise ValueError(
-            "Cadangan TXT untuk indeks "
-            "pengujian tidak tersedia."
-        )
-
-    database = run / "dataset.sqlite"
-
-    with sqlite3.connect(database) as connection:
-        connection.execute(
-            "CREATE TABLE passages ("
-            "id INTEGER PRIMARY KEY,"
-            "source TEXT,"
-            "content TEXT,"
-            "digest TEXT UNIQUE)"
-        )
-
+        raise ValueError('Cadangan TXT untuk indeks pengujian tidak tersedia.')
+    code = Path(__file__).resolve().parents[2] / 'training/retrieval.py'
+    if code.is_symlink() or not code.is_file():
+        raise ValueError('Kode retrieval tidak tersedia.')
+    spec = spec_from_file_location('cth_retrieval', code)
+    retrieval = module_from_spec(spec)
+    spec.loader.exec_module(retrieval)
+    with closing(sqlite3.connect(run / 'dataset.sqlite')) as connection:
+        retrieval.create_index(connection)
         for index, meta in enumerate(sources):
-            text_file = work / f"source-{index}.txt"
-
-            download_drive(
-                drive,
-                job["project_id"],
-                meta.get("file_id"),
-                "datasets",
-                text_file,
-                meta.get("size"),
-                meta.get("sha256"),
-            )
-
-            with text_file.open(
-                encoding="utf-8",
-                errors="strict",
-            ) as handle:
-                while block := handle.read(16000):
-                    if "\x00" in block:
-                        raise ValueError(
-                            "TXT mengandung NUL."
-                        )
-
-                    for offset in range(
-                        0,
-                        len(block),
-                        1200,
-                    ):
-                        text = block[
-                            offset:offset + 1200
-                        ].strip()
-
-                        if text:
-                            digest = hashlib.sha256(
-                                text.encode()
-                            ).hexdigest()
-
-                            connection.execute(
-                                "INSERT OR IGNORE INTO "
-                                "passages(source,content,digest) "
-                                "VALUES(?,?,?)",
-                                (
-                                    f"{index:04d}.txt",
-                                    text,
-                                    digest,
-                                ),
-                            )
-
+            text_file = work / f'source-{index}.txt'
+            download_drive(drive, job['project_id'], meta.get('file_id'), 'datasets',
+                           text_file, meta.get('size'), meta.get('sha256'))
+            label = f"{meta.get('name', 'TXT tersimpan')} (Drive: {meta['file_id']})"
+            with text_file.open(encoding='utf-8', errors='strict') as handle:
+                retrieval.index_source(connection, label, handle)
             text_file.unlink()
-
         connection.commit()
-
-        if not connection.execute(
-            "SELECT COUNT(*) FROM passages"
-        ).fetchone()[0]:
-            raise ValueError("Indeks sumber kosong.")
+    atomic_json(run / 'source-index-version.json', {'version': 2})
 
 
 RESTORE = r'''
@@ -738,6 +685,11 @@ with ExitStack() as locks:
             for name, expected in cfg['files'].items():
                 target = run / name
 
+                if name in {'dataset.sqlite', 'source-index-version.json'}:
+                    if target.is_symlink():
+                        raise RuntimeError('Indeks sumber berupa symlink')
+                    continue
+
                 if (
                     target.resolve() != target
                     or not target.is_file()
@@ -747,16 +699,11 @@ with ExitStack() as locks:
                         'tidak ditimpa otomatis'
                     )
 
-                if name != 'dataset.sqlite':
-                    digest = hashlib.sha256(
-                        target.read_bytes()
-                    ).hexdigest()
-
-                    if digest != expected:
-                        raise RuntimeError(
-                            'Run lama berbeda; '
-                            'tidak ditimpa otomatis'
-                        )
+                digest = hashlib.sha256(target.read_bytes()).hexdigest()
+                if digest != expected:
+                    raise RuntimeError('Run lama berbeda; tidak ditimpa otomatis')
+            os.replace(stage / 'dataset.sqlite', run / 'dataset.sqlite')
+            os.replace(stage / 'source-index-version.json', run / 'source-index-version.json')
         else:
             stage.rename(run)
 
